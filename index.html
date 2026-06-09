@@ -1026,9 +1026,14 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
   </aside>
 
   <div class="app-shell">
-    <!-- MARKET TICKER -->
+    <!-- MARKET TICKER + LAST UPDATE -->
     <div class="market-ticker" id="market-ticker">
       <div class="ticker-item"><span class="ticker-sym">Loading market data…</span></div>
+      <div style="margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:6px;font-size:.7rem;color:var(--dim);font-family:'JetBrains Mono',monospace;padding-left:18px;border-left:1px solid var(--border)">
+        <i class="fa fa-clock" style="font-size:.65rem"></i>
+        <span id="last-update-ts">—</span>
+        <span id="auto-refresh-badge" style="display:none;background:rgba(41,121,255,.15);color:var(--accent);padding:1px 7px;border-radius:99px;font-size:.65rem">● LIVE</span>
+      </div>
     </div>
 
     <div class="main">
@@ -1060,8 +1065,11 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
     <!-- PORTFOLIO PAGE -->
     <div class="page" id="page-portfolio">
       <div class="page-title"><i class="fa fa-briefcase"></i> Portfolio
-      <button class="btn btn-outline" onclick="loadPortfolio(true)" style="margin-left:auto;font-size:.72rem;padding:5px 12px" title="Force-refresh live quotes"><i class="fa fa-rotate-right"></i> Refresh Quotes</button>
-    </div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-outline" onclick="exportHoldingsCSV()" style="font-size:.72rem;padding:5px 12px" title="Export holdings to CSV"><i class="fa fa-download"></i> Export CSV</button>
+          <button class="btn btn-outline" onclick="loadPortfolio(true)" style="font-size:.72rem;padding:5px 12px" title="Force-refresh live quotes"><i class="fa fa-rotate-right"></i> Refresh Quotes</button>
+        </div>
+      </div>
 
       <div class="cards-row cards-row-5" id="port-summary-cards">
         <div class="card"><div class="card-label">Total Invested</div><div class="card-value td-mono" id="pc-invested">₹0</div><div class="card-icon blue"><i class="fa fa-wallet"></i></div></div>
@@ -1177,7 +1185,10 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
 
     <!-- WATCHLIST PAGE -->
     <div class="page" id="page-watchlist">
-      <div class="page-title"><i class="fa fa-star"></i> Watchlist</div>
+      <div class="page-title"><i class="fa fa-star"></i> Watchlist
+        <button class="btn btn-outline" onclick="document.getElementById('wl-import-input').click()" style="margin-left:auto;font-size:.72rem;padding:5px 12px" title="Import tickers from CSV or XLSX"><i class="fa fa-upload"></i> Import CSV/XLSX</button>
+        <input type="file" id="wl-import-input" accept=".csv,.xlsx,.xls" style="display:none" onchange="importWatchlistFile(event)"/>
+      </div>
       <div class="watchlist-add-row">
         <div class="form-group" style="flex:1">
           <div class="form-label">Add to Watchlist</div>
@@ -1557,6 +1568,8 @@ async function startApp() {
   }
   await loadPage('dashboard');
   loadMarketTicker();
+  setLastUpdateNow();
+  startAutoRefresh();
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1690,6 +1703,7 @@ function doLogout() {
   localStorage.removeItem('apex_session');
   USER = null;
   holdingsCache = { data: null, ts: 0, uid: null };
+  stopAutoRefresh();
   document.getElementById('app').style.display = 'none';
   document.getElementById('auth-page').style.display = 'flex';
   switchAuthTab('login');
@@ -1873,6 +1887,7 @@ async function loadPortfolio(force = false) {
   holdingsData = holdings;
   renderHoldingsTable(holdings);
   renderPortfolioCards(holdings);
+  setLastUpdateNow();
   // loadTrades() is intentionally NOT called here.
   // It runs only when the user opens the Performance tab via switchPortTab('performance').
 }
@@ -2255,17 +2270,20 @@ async function loadWatchlist() {
     renderWatchlistHeatmap([]);
     return;
   }
-  // Enrich with live quotes from API
+  // Enrich each item: quote + multi-period returns in parallel
   const items = await Promise.all(raw.map(async item => {
     try {
-      const [qr, rr] = await Promise.all([
+      const [qRes, rRes] = await Promise.all([
         fetch(`${API}/quote/${item.symbol}`),
-        fetch(`${API}/quote/${item.symbol}`) // placeholder — returns already has ret fields from quote
+        fetch(`${API}/returns/${item.symbol}`)
       ]);
-      const q = qr.ok ? await qr.json() : {};
-      // Compute simple returns from available quote data
+      const q = qRes.ok ? await qRes.json() : {};
+      const r = rRes.ok ? await rRes.json() : {};
       return { ...item, ...q,
-               ret_1d: q.day_chg_pct || 0, ret_1w: 0, ret_1m: 0, ret_1y: 0 };
+               ret_1d: q.day_chg_pct ?? r.ret_1d ?? 0,
+               ret_1w: r.ret_1w ?? 0,
+               ret_1m: r.ret_1m ?? 0,
+               ret_1y: r.ret_1y ?? 0 };
     } catch {
       return { ...item, ltp: null, day_chg_pct: 0, ret_1d: 0, ret_1w: 0, ret_1m: 0, ret_1y: 0 };
     }
@@ -3013,6 +3031,221 @@ function fmtNum(n) {
   if (Math.abs(n) >= 1e7) return (n/1e7).toFixed(2)+'Cr';
   if (Math.abs(n) >= 1e5) return (n/1e5).toFixed(2)+'L';
   return n.toLocaleString('en-IN', {maximumFractionDigits:2});
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// LAST UPDATE TIMESTAMP
+// ──────────────────────────────────────────────────────────────────────────────
+function setLastUpdateNow() {
+  const el = document.getElementById('last-update-ts');
+  if (!el) return;
+  const now = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  el.textContent = `Updated ${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())} IST`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// AUTO-REFRESH  (9:15 AM – 3:30 PM IST, Mon–Fri, every 5 minutes)
+// ──────────────────────────────────────────────────────────────────────────────
+let _autoRefreshTimer = null;
+
+function isMarketOpen() {
+  // Convert current UTC to IST (UTC+5:30)
+  const now   = new Date();
+  const ist   = new Date(now.getTime() + (5*60+30)*60*1000);
+  const day   = ist.getUTCDay();         // 0=Sun,6=Sat
+  const hh    = ist.getUTCHours();
+  const mm    = ist.getUTCMinutes();
+  const mins  = hh * 60 + mm;
+  const open  = 9*60 + 15;              // 9:15 AM
+  const close = 15*60 + 30;             // 3:30 PM
+  return day >= 1 && day <= 5 && mins >= open && mins <= close;
+}
+
+async function autoRefreshTick() {
+  if (!USER) return;
+  if (!isMarketOpen()) return;
+  const activePage = document.querySelector('.page.active')?.id?.replace('page-','');
+  if (activePage === 'portfolio') {
+    holdingsCache = { data: null, ts: 0, uid: null };
+    await loadPortfolio(true);
+  } else if (activePage === 'watchlist') {
+    await loadWatchlist();
+  } else if (activePage === 'dashboard') {
+    holdingsCache = { data: null, ts: 0, uid: null };
+    await loadDashboard();
+  }
+  setLastUpdateNow();
+}
+
+function startAutoRefresh() {
+  if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+  const badge = document.getElementById('auto-refresh-badge');
+  _autoRefreshTimer = setInterval(async () => {
+    if (isMarketOpen()) {
+      if (badge) badge.style.display = 'inline-block';
+      await autoRefreshTick();
+    } else {
+      if (badge) badge.style.display = 'none';
+    }
+  }, 5 * 60 * 1000); // 5 minutes
+  // Show/hide badge immediately on start
+  if (badge) badge.style.display = isMarketOpen() ? 'inline-block' : 'none';
+}
+
+function stopAutoRefresh() {
+  if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+  const badge = document.getElementById('auto-refresh-badge');
+  if (badge) badge.style.display = 'none';
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// EXPORT PORTFOLIO HOLDINGS TO CSV
+// ──────────────────────────────────────────────────────────────────────────────
+function exportHoldingsCSV() {
+  const holdings = holdingsData.length ? holdingsData : lsGetHoldings(USER.user_id);
+  if (!holdings.length) { alert('No holdings to export.'); return; }
+  const headers = ['Symbol','Name','Industry','Buy Date','Buy Price (₹)','Quantity',
+                   'Invested (₹)','LTP (₹)','Current Value (₹)','P&L (₹)','P&L %','Day Chg %'];
+  const rows = holdings.map(h => [
+    h.symbol, h.name || h.symbol, h.industry || '',
+    h.date || '', h.buy_price, h.qty,
+    (h.invested ?? (h.buy_price * h.qty)).toFixed(2),
+    h.ltp ?? h.buy_price,
+    (h.curr_value ?? (h.buy_price * h.qty)).toFixed(2),
+    (h.pnl ?? 0).toFixed(2),
+    (h.pnl_pct ?? 0).toFixed(2) + '%',
+    (h.day_chg_pct ?? 0).toFixed(2) + '%'
+  ]);
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `ApexWealth_Holdings_${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// IMPORT WATCHLIST FROM CSV / XLSX
+// ──────────────────────────────────────────────────────────────────────────────
+async function importWatchlistFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = ''; // reset so same file can be re-imported
+
+  let rows = [];
+  try {
+    if (file.name.endsWith('.csv')) {
+      rows = await parseCSV(file);
+    } else {
+      rows = await parseXLSX(file);
+    }
+  } catch(e) {
+    alert('Could not read file: ' + e.message); return;
+  }
+
+  if (!rows.length) { alert('No data found in file.'); return; }
+
+  // Detect symbol column — look for a header named Symbol, Ticker, SYMBOL, etc.
+  const headers = Object.keys(rows[0]).map(h => h.trim().toLowerCase());
+  const symKey  = Object.keys(rows[0]).find(k => /^(symbol|ticker|scrip|stock|code)$/i.test(k.trim()));
+  const nameKey = Object.keys(rows[0]).find(k => /^(name|company|description)$/i.test(k.trim()));
+  const indKey  = Object.keys(rows[0]).find(k => /^(industry|sector)$/i.test(k.trim()));
+
+  if (!symKey) {
+    alert('No "Symbol" column found.\nExpected column named: Symbol, Ticker, Scrip, Stock, or Code.');
+    return;
+  }
+
+  // Match against known tickers
+  const knownMap = {};
+  TICKERS.forEach(t => { knownMap[t.symbol.toUpperCase()] = t; });
+
+  const existing = new Set(lsGetWatchlist(USER.user_id).map(w => w.symbol));
+  const toAdd = [], skipped = [], unknown = [];
+
+  rows.forEach(row => {
+    const raw = String(row[symKey] || '').trim().toUpperCase()
+                  .replace(/\.NS$/i,'').replace(/\.BO$/i,'');
+    if (!raw) return;
+    if (existing.has(raw)) { skipped.push(raw); return; }
+    const match = knownMap[raw];
+    if (match) {
+      toAdd.push({
+        symbol:   match.symbol,
+        name:     (nameKey ? row[nameKey] : null) || match.name,
+        industry: (indKey  ? row[indKey]  : null) || match.industry || '',
+        added:    new Date().toISOString().split('T')[0]
+      });
+      existing.add(raw);
+    } else {
+      // Not in tickers.json — add anyway with whatever name is available
+      toAdd.push({
+        symbol:   raw,
+        name:     (nameKey ? row[nameKey] : null) || raw,
+        industry: (indKey  ? row[indKey]  : null) || '',
+        added:    new Date().toISOString().split('T')[0]
+      });
+      existing.add(raw);
+      unknown.push(raw);
+    }
+  });
+
+  if (!toAdd.length) {
+    alert(`Nothing new to import.\n${skipped.length} ticker(s) already in watchlist.`); return;
+  }
+
+  const wl = lsGetWatchlist(USER.user_id);
+  lsSaveWatchlist(USER.user_id, [...wl, ...toAdd]);
+
+  let msg = `✓ Imported ${toAdd.length} ticker(s).`;
+  if (skipped.length) msg += `\nSkipped ${skipped.length} already in watchlist.`;
+  if (unknown.length) msg += `\n⚠ ${unknown.length} symbol(s) not found in NSE list — added anyway: ${unknown.slice(0,5).join(', ')}${unknown.length>5?'…':''}`;
+  alert(msg);
+  await loadWatchlist();
+}
+
+async function parseCSV(file) {
+  const text = await file.text();
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return [];
+  // Parse with basic CSV handling (handles quoted fields)
+  function parseLine(line) {
+    const vals = []; let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+      else { cur += ch; }
+    }
+    vals.push(cur.trim());
+    return vals;
+  }
+  const headers = parseLine(lines[0]);
+  return lines.slice(1).map(line => {
+    const vals = parseLine(line);
+    const obj = {};
+    headers.forEach((h,i) => { obj[h.trim()] = vals[i] ?? ''; });
+    return obj;
+  }).filter(row => Object.values(row).some(v => v));
+}
+
+async function parseXLSX(file) {
+  // Dynamically load SheetJS from CDN if not already loaded
+  if (!window.XLSX) {
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = res; s.onerror = () => rej(new Error('Failed to load XLSX library'));
+      document.head.appendChild(s);
+    });
+  }
+  const buf  = await file.arrayBuffer();
+  const wb   = XLSX.read(buf, {type:'array'});
+  const ws   = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, {defval:''});
 }
 
 // Close modals on overlay click

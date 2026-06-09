@@ -145,6 +145,26 @@ def index():
     resp.headers['Expires']       = '0'
     return resp
 
+@app.route('/api/returns/<symbol>', methods=['GET'])
+def get_returns(symbol):
+    """Return 1d/1w/1m/1y percentage changes for a symbol."""
+    try:
+        t    = yf.Ticker(get_nse_ticker(symbol))
+        hist = t.history(period='1y')
+        if hist.empty:
+            return jsonify({'ret_1d':0,'ret_1w':0,'ret_1m':0,'ret_1y':0})
+        ltp = float(hist['Close'].iloc[-1])
+        def pct(n):
+            try:
+                idx  = max(0, len(hist)-1-n)
+                base = float(hist['Close'].iloc[idx])
+                return round((ltp-base)/base*100, 2) if base else 0
+            except: return 0
+        return jsonify({'ret_1d': pct(1), 'ret_1w': pct(5), 'ret_1m': pct(22),
+                        'ret_1y': pct(min(252, len(hist)-1))})
+    except Exception as e:
+        return jsonify({'ret_1d':0,'ret_1w':0,'ret_1m':0,'ret_1y':0})
+
 @app.route('/api/tickers', methods=['GET'])
 def get_tickers():
     """Serve tickers.json via the API function as a CDN-independent fallback."""
