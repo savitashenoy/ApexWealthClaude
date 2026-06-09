@@ -145,6 +145,17 @@ def index():
     resp.headers['Expires']       = '0'
     return resp
 
+@app.route('/api/tickers', methods=['GET'])
+def get_tickers():
+    """Serve tickers.json via the API function as a CDN-independent fallback."""
+    tickers_path = os.path.join(BASE_DIR, 'static', 'tickers.json')
+    try:
+        with open(tickers_path) as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify([]), 200
+
 @app.route('/static/<path:filename>')
 def static_files(filename):
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)

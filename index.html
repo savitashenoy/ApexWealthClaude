@@ -1491,11 +1491,25 @@ window.onload = () => {
   // Hard failsafe — if nothing shows within 4s, force the login screen
   const failsafe = setTimeout(() => showAuth(), 4000);
 
-  // Load tickers in background — fire and forget, never blocks anything
-  fetch('/static/tickers.json')
-    .then(r => r.json())
-    .then(data => { TICKERS = Array.isArray(data) ? data : []; })
-    .catch(() => { TICKERS = []; });
+  // Load tickers — try static CDN first, fall back to API endpoint
+  (async () => {
+    try {
+      const r = await fetch('/static/tickers.json');
+      const contentType = r.headers.get('content-type') || '';
+      if (r.ok && contentType.includes('json')) {
+        TICKERS = await r.json();
+      } else {
+        throw new Error('not json');
+      }
+    } catch (_) {
+      try {
+        const r2 = await fetch('/api/tickers');
+        TICKERS = await r2.json();
+      } catch (_) {
+        TICKERS = [];
+      }
+    }
+  })();
 
   // Set today's date on add form
   try {
