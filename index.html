@@ -1573,17 +1573,11 @@ async function startApp() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// LOCAL STORAGE DATA LAYER
-// All user data lives in localStorage — persistent across sessions, zero backend.
-// Backend is used only for market data (quotes, charts, indices, analysis).
+// DATA LAYER — all user data stored in Vercel KV via backend API
+// localStorage is used only for: theme preference, session token
 // ──────────────────────────────────────────────────────────────────────────────
-const LS = {
-  get(key)       { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } },
-  set(key, val)  { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} },
-  del(key)       { localStorage.removeItem(key); },
-};
 
-// ── Crypto helpers (PBKDF2 via WebCrypto — no server needed) ─────────────────
+// ── Crypto helpers (PBKDF2 via WebCrypto) ─────────────────────────────────────
 async function hashPassword(pwd) {
   const enc  = new TextEncoder();
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -1595,34 +1589,22 @@ async function hashPassword(pwd) {
   return `pbkdf2:${saltHex}:${hash}`;
 }
 
-async function checkPassword(pwd, stored) {
-  try {
-    const [, saltHex, storedHash] = stored.split(':');
-    const salt = new Uint8Array(saltHex.match(/.{2}/g).map(h => parseInt(h,16)));
-    const enc  = new TextEncoder();
-    const key  = await crypto.subtle.importKey('raw', enc.encode(pwd), 'PBKDF2', false, ['deriveBits']);
-    const bits = await crypto.subtle.deriveBits(
-      { name:'PBKDF2', salt, iterations:200000, hash:'SHA-256' }, key, 256);
-    const hash = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2,'0')).join('');
-    return hash === storedHash;
-  } catch { return false; }
+// ── API helper ────────────────────────────────────────────────────────────────
+async function apiCall(path, method = 'GET', body = null) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(`${API}${path}`, opts);
+  const contentType = r.headers.get('content-type') || '';
+  if (!contentType.includes('json')) {
+    throw new Error(`Server returned non-JSON (status ${r.status})`);
+  }
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`);
+  return d;
 }
-
-// ── User store ────────────────────────────────────────────────────────────────
-function lsGetUsers()      { return LS.get('apex_users') || {}; }
-function lsSaveUsers(u)    { LS.set('apex_users', u); }
-
-// ── Holdings store ────────────────────────────────────────────────────────────
-function lsGetHoldings(uid)    { return (LS.get('apex_portfolios') || {})[uid] || []; }
-function lsSaveHoldings(uid, h){ const p = LS.get('apex_portfolios') || {}; p[uid]=h; LS.set('apex_portfolios', p); }
-
-// ── Watchlist store ───────────────────────────────────────────────────────────
-function lsGetWatchlist(uid)   { return (LS.get('apex_watchlists') || {})[uid] || []; }
-function lsSaveWatchlist(uid,w){ const wl = LS.get('apex_watchlists') || {}; wl[uid]=w; LS.set('apex_watchlists',wl); }
-
-// ── Trades store ──────────────────────────────────────────────────────────────
-function lsGetTrades(uid)      { return (LS.get('apex_trades') || {})[uid] || []; }
-function lsSaveTrades(uid, t)  { const tr = LS.get('apex_trades') || {}; tr[uid]=t; LS.set('apex_trades', tr); }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // AUTH
@@ -1646,12 +1628,8 @@ async function doLogin(e) {
   errEl.textContent = '';
   btn.innerHTML = '<div class="spinner"></div>';
   try {
-    const users = lsGetUsers();
-    const user  = users[email];
-    if (!user) throw new Error('Invalid credentials');
-    const ok = await checkPassword(password, user.password);
-    if (!ok) throw new Error('Invalid credentials');
-    USER = { user_id: user.id, email };
+    const d = await apiCall('/login', 'POST', { email, password });
+    USER = { user_id: d.user_id, email: d.email };
     localStorage.setItem('apex_session', JSON.stringify(USER));
     startApp();
   } catch(err) {
@@ -1670,14 +1648,17 @@ async function doSignup(e) {
   if (!email || !password) { errEl.textContent = 'Email and password required'; return; }
   if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters'; return; }
   if (password !== confirm) { errEl.textContent = 'Passwords do not match'; return; }
-  const users = lsGetUsers();
-  if (users[email]) { errEl.textContent = 'Email already registered'; return; }
-  const user_id = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
-  users[email] = { id: user_id, email, password: await hashPassword(password), created: new Date().toISOString() };
-  lsSaveUsers(users);
-  USER = { user_id, email };
-  localStorage.setItem('apex_session', JSON.stringify(USER));
-  startApp();
+  const btn = document.querySelector('#signup-form button[type=submit], #signup-form .btn-primary');
+  if (btn) btn.innerHTML = '<div class="spinner"></div>';
+  try {
+    const d = await apiCall('/signup', 'POST', { email, password });
+    USER = { user_id: d.user_id, email: d.email };
+    localStorage.setItem('apex_session', JSON.stringify(USER));
+    startApp();
+  } catch(err) {
+    errEl.textContent = err.message;
+    if (btn) btn.textContent = 'Create Account';
+  }
 }
 
 async function doChangePassword(e) {
@@ -1688,15 +1669,13 @@ async function doChangePassword(e) {
   const errEl    = document.getElementById('cp-error');
   const okEl     = document.getElementById('cp-success');
   errEl.textContent = ''; okEl.textContent = '';
-  const users = lsGetUsers();
-  const user  = users[email];
-  if (!user || !(await checkPassword(old_pwd, user.password))) {
-    errEl.textContent = 'Invalid credentials'; return;
+  try {
+    await apiCall('/change-password', 'POST', { email, old_password: old_pwd, new_password: new_pwd });
+    okEl.textContent = '✓ Password updated successfully';
+    setTimeout(() => switchAuthTab('login'), 2000);
+  } catch(err) {
+    errEl.textContent = err.message;
   }
-  users[email].password = await hashPassword(new_pwd);
-  lsSaveUsers(users);
-  okEl.textContent = '✓ Password updated successfully';
-  setTimeout(() => switchAuthTab('login'), 2000);
 }
 
 function doLogout() {
@@ -1753,31 +1732,9 @@ async function fetchHoldings(force = false) {
   if (!force && holdingsCache.data && holdingsCache.uid === USER.user_id && (now - holdingsCache.ts) < HOLDINGS_TTL) {
     return holdingsCache.data;
   }
-  // Load raw holdings from localStorage
-  const raw = lsGetHoldings(USER.user_id);
-  // Enrich with live quotes from backend
-  const enriched = await Promise.all(raw.map(async h => {
-    try {
-      const r = await fetch(`${API}/quote/${h.symbol}`);
-      if (!r.ok) throw new Error('no quote');
-      const q = await r.json();
-      if (q.error) throw new Error('no quote');
-      const invested  = h.buy_price * h.qty;
-      const curr_val  = q.ltp * h.qty;
-      const pnl       = curr_val - invested;
-      const pnl_pct   = invested ? (pnl / invested * 100) : 0;
-      return { ...h, ltp: q.ltp, day_chg_pct: q.day_chg_pct,
-               invested: +invested.toFixed(2), curr_value: +curr_val.toFixed(2),
-               pnl: +pnl.toFixed(2), pnl_pct: +pnl_pct.toFixed(2) };
-    } catch {
-      const invested = h.buy_price * h.qty;
-      return { ...h, ltp: h.buy_price, day_chg_pct: 0,
-               invested: +invested.toFixed(2), curr_value: +invested.toFixed(2),
-               pnl: 0, pnl_pct: 0, stale: true };
-    }
-  }));
-  holdingsCache = { data: enriched, ts: now, uid: USER.user_id };
-  return enriched;
+  const holdings = await apiCall(`/holdings/${USER.user_id}`);
+  holdingsCache = { data: holdings, ts: now, uid: USER.user_id };
+  return holdings;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1987,35 +1944,27 @@ async function addHolding() {
   if (!selectedTicker)      { errEl.textContent = 'Select a ticker from the dropdown'; return; }
   if (!price || price <= 0) { errEl.textContent = 'Enter a valid buy price'; return; }
   if (!qty   || qty   <= 0) { errEl.textContent = 'Enter a valid quantity'; return; }
-
-  const holding = {
-    id:        crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2),
-    symbol:    selectedTicker.symbol,
-    name:      selectedTicker.name,
-    buy_price: +price.toFixed(6),
-    qty:       +qty.toFixed(6),
-    date,
-    industry:  selectedTicker.industry || '',
-    sector:    ''
-  };
-  const holdings = lsGetHoldings(USER.user_id);
-  holdings.push(holding);
-  lsSaveHoldings(USER.user_id, holdings);
-
-  document.getElementById('add-ticker').value = '';
-  document.getElementById('add-price').value  = '';
-  document.getElementById('add-qty').value    = '';
-  document.getElementById('add-date').value   = new Date().toISOString().split('T')[0];
-  selectedTicker = null;
-  holdingsCache  = { data: null, ts: 0, uid: null };
-  await loadPortfolio(true);
-  await loadDashboard();
+  try {
+    await apiCall(`/holdings/${USER.user_id}`, 'POST', {
+      symbol: selectedTicker.symbol, name: selectedTicker.name,
+      buy_price: price, qty, date, industry: selectedTicker.industry || ''
+    });
+    document.getElementById('add-ticker').value = '';
+    document.getElementById('add-price').value  = '';
+    document.getElementById('add-qty').value    = '';
+    document.getElementById('add-date').value   = new Date().toISOString().split('T')[0];
+    selectedTicker = null;
+    holdingsCache  = { data: null, ts: 0, uid: null };
+    await loadPortfolio(true);
+    await loadDashboard();
+  } catch(err) {
+    errEl.textContent = err.message || 'Error adding holding';
+  }
 }
 
 async function deleteHolding(id) {
   if (!confirm('Remove this holding?')) return;
-  const holdings = lsGetHoldings(USER.user_id).filter(h => h.id !== id);
-  lsSaveHoldings(USER.user_id, holdings);
+  await apiCall(`/holdings/${USER.user_id}/${id}`, 'DELETE');
   holdingsCache = { data: null, ts: 0, uid: null };
   await loadPortfolio(true);
 }
@@ -2046,45 +1995,13 @@ async function confirmSell() {
   if (!sell_price || sell_price <= 0) { document.getElementById('sell-error').textContent = 'Enter a valid sell price'; return; }
   if (!sell_qty   || sell_qty   <= 0) { document.getElementById('sell-error').textContent = 'Enter a valid sell quantity'; return; }
   if (sellMaxQty  && sell_qty > sellMaxQty) { document.getElementById('sell-error').textContent = `Cannot exceed available quantity (${sellMaxQty})`; return; }
-
   const btn = document.querySelector('#sell-modal .btn-primary');
   const origText = btn.textContent;
   btn.innerHTML = '<div class="spinner" style="margin:0;border-top-color:#000"></div>';
   btn.disabled  = true;
   document.getElementById('sell-error').textContent = '';
-
   try {
-    const holdings = lsGetHoldings(USER.user_id);
-    const holding  = holdings.find(h => h.id === sellHoldingId);
-    if (!holding) throw new Error('Holding not found');
-
-    const invested = holding.buy_price * sell_qty;
-    const pnl      = (sell_price - holding.buy_price) * sell_qty;
-    const trade = {
-      id:         crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36),
-      symbol:     holding.symbol,
-      name:       holding.name || holding.symbol,
-      buy_price:  holding.buy_price,
-      sell_price,
-      qty:        sell_qty,
-      buy_date:   holding.date,
-      sell_date:  new Date().toISOString().split('T')[0],
-      pnl:        +pnl.toFixed(2),
-      pnl_pct:    invested ? +(pnl / invested * 100).toFixed(2) : 0
-    };
-    const trades = lsGetTrades(USER.user_id);
-    trades.push(trade);
-    lsSaveTrades(USER.user_id, trades);
-
-    // Full sell removes holding; partial sell reduces qty
-    let updated;
-    if (sell_qty >= holding.qty) {
-      updated = holdings.filter(h => h.id !== sellHoldingId);
-    } else {
-      updated = holdings.map(h => h.id === sellHoldingId ? { ...h, qty: +(h.qty - sell_qty).toFixed(6) } : h);
-    }
-    lsSaveHoldings(USER.user_id, updated);
-
+    await apiCall(`/sell/${USER.user_id}/${sellHoldingId}`, 'POST', { sell_price, qty: sell_qty });
     closeSellModal();
     holdingsCache = { data: null, ts: 0, uid: null };
     await loadPortfolio(true);
@@ -2114,13 +2031,14 @@ async function confirmEdit() {
   const qty   = parseFloat(document.getElementById('edit-qty').value);
   const date  = document.getElementById('edit-date').value;
   if (!price || !qty) { document.getElementById('edit-error').textContent = 'Fill all fields'; return; }
-  const holdings = lsGetHoldings(USER.user_id).map(h =>
-    h.id === editHoldingId ? { ...h, buy_price: +price.toFixed(6), qty: +qty.toFixed(6), date } : h
-  );
-  lsSaveHoldings(USER.user_id, holdings);
-  closeEditModal();
-  holdingsCache = { data: null, ts: 0, uid: null };
-  await loadPortfolio(true);
+  try {
+    await apiCall(`/holdings/${USER.user_id}/${editHoldingId}`, 'PUT', { buy_price: price, qty, date });
+    closeEditModal();
+    holdingsCache = { data: null, ts: 0, uid: null };
+    await loadPortfolio(true);
+  } catch(err) {
+    document.getElementById('edit-error').textContent = err.message || 'Error updating holding';
+  }
 }
 
 // PORTFOLIO TABS
@@ -2171,7 +2089,7 @@ function renderAllocationCharts() {
 }
 
 async function loadTrades() {
-  const trades = lsGetTrades(USER.user_id);
+  const trades = await apiCall(`/trades/${USER.user_id}`);
   const tbody  = document.getElementById('trades-tbody');
 
   if (!trades.length) {
@@ -2251,19 +2169,19 @@ function closeWLAC()      { document.getElementById('wl-ac-list').style.display 
 
 async function addToWatchlist() {
   if (!selectedWLTicker) return;
-  const wl = lsGetWatchlist(USER.user_id);
-  if (wl.some(w => w.symbol === selectedWLTicker.symbol)) {
-    return; // already in watchlist
+  try {
+    await apiCall(`/watchlist/${USER.user_id}`, 'POST', selectedWLTicker);
+    document.getElementById('wl-ticker').value = '';
+    selectedWLTicker = null;
+    await loadWatchlist();
+  } catch(err) {
+    if (err.message && err.message.includes('Already')) return; // silently skip duplicate
+    console.error('addToWatchlist:', err);
   }
-  wl.push({ ...selectedWLTicker, added: new Date().toISOString().split('T')[0] });
-  lsSaveWatchlist(USER.user_id, wl);
-  document.getElementById('wl-ticker').value = '';
-  selectedWLTicker = null;
-  await loadWatchlist();
 }
 
 async function loadWatchlist() {
-  const raw   = lsGetWatchlist(USER.user_id);
+  const raw   = await apiCall(`/watchlist/${USER.user_id}`);
   const tbody = document.getElementById('watchlist-tbody');
   if (!raw.length) {
     tbody.innerHTML = `<tr><td colspan="10"><div class="empty-state"><i class="fa fa-star"></i><p>Your watchlist is empty.</p></div></td></tr>`;
@@ -2391,19 +2309,12 @@ async function confirmWatchlistPortfolioAdd() {
   btn.innerHTML = '<div class="spinner" style="margin:0"></div>';
   btn.disabled = true;
   try {
-    const holding = {
-      id:        crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36),
-      symbol:    watchlistPortfolioItem.symbol,
-      name:      watchlistPortfolioItem.name || watchlistPortfolioItem.symbol,
-      industry:  watchlistPortfolioItem.industry || '',
-      buy_price: +price.toFixed(6),
-      qty:       +qty.toFixed(6),
-      date,
-      sector:    ''
-    };
-    const holdings = lsGetHoldings(USER.user_id);
-    holdings.push(holding);
-    lsSaveHoldings(USER.user_id, holdings);
+    await apiCall(`/holdings/${USER.user_id}`, 'POST', {
+      symbol: watchlistPortfolioItem.symbol,
+      name:   watchlistPortfolioItem.name || watchlistPortfolioItem.symbol,
+      industry: watchlistPortfolioItem.industry || '',
+      buy_price: price, qty, date
+    });
     closeWatchlistPortfolioModal();
     holdingsCache = { data: null, ts: 0, uid: null };
     await loadPortfolio(true);
@@ -2416,8 +2327,7 @@ async function confirmWatchlistPortfolioAdd() {
 }
 
 async function removeFromWatchlist(symbol) {
-  const wl = lsGetWatchlist(USER.user_id).filter(w => w.symbol !== symbol);
-  lsSaveWatchlist(USER.user_id, wl);
+  await apiCall(`/watchlist/${USER.user_id}/${symbol}`, 'DELETE');
   await loadWatchlist();
 }
 
@@ -3103,8 +3013,8 @@ function stopAutoRefresh() {
 // EXPORT PORTFOLIO HOLDINGS TO CSV
 // ──────────────────────────────────────────────────────────────────────────────
 function exportHoldingsCSV() {
-  const holdings = holdingsData.length ? holdingsData : lsGetHoldings(USER.user_id);
-  if (!holdings.length) { alert('No holdings to export.'); return; }
+  const holdings = holdingsData;
+  if (!holdings || !holdings.length) { alert('No holdings to export. Load the portfolio first.'); return; }
   const headers = ['Symbol','Name','Industry','Buy Date','Buy Price (₹)','Quantity',
                    'Invested (₹)','LTP (₹)','Current Value (₹)','P&L (₹)','P&L %','Day Chg %'];
   const rows = holdings.map(h => [
@@ -3163,7 +3073,7 @@ async function importWatchlistFile(event) {
   const knownMap = {};
   TICKERS.forEach(t => { knownMap[t.symbol.toUpperCase()] = t; });
 
-  const existing = new Set(lsGetWatchlist(USER.user_id).map(w => w.symbol));
+  const existing = new Set((await apiCall(`/watchlist/${USER.user_id}`)).map(w => w.symbol));
   const toAdd = [], skipped = [], unknown = [];
 
   rows.forEach(row => {
@@ -3197,13 +3107,15 @@ async function importWatchlistFile(event) {
     alert(`Nothing new to import.\n${skipped.length} ticker(s) already in watchlist.`); return;
   }
 
-  const wl = lsGetWatchlist(USER.user_id);
-  lsSaveWatchlist(USER.user_id, [...wl, ...toAdd]);
-
-  let msg = `✓ Imported ${toAdd.length} ticker(s).`;
-  if (skipped.length) msg += `\nSkipped ${skipped.length} already in watchlist.`;
-  if (unknown.length) msg += `\n⚠ ${unknown.length} symbol(s) not found in NSE list — added anyway: ${unknown.slice(0,5).join(', ')}${unknown.length>5?'…':''}`;
-  alert(msg);
+  try {
+    const result = await apiCall(`/watchlist/${USER.user_id}/bulk`, 'POST', toAdd);
+    let msg = `✓ Imported ${result.added} ticker(s).`;
+    if (result.skipped) msg += `\nSkipped ${result.skipped} already in watchlist.`;
+    if (unknown.length) msg += `\n⚠ ${unknown.length} unrecognised symbol(s) added anyway: ${unknown.slice(0,5).join(', ')}${unknown.length>5?'…':''}`;
+    alert(msg);
+  } catch(err) {
+    alert('Import failed: ' + err.message);
+  }
   await loadWatchlist();
 }
 
