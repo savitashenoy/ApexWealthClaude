@@ -43,6 +43,7 @@ def user_key(email):       return f'user:{email}'
 def holdings_key(uid):     return f'holdings:{uid}'
 def watchlist_key(uid):    return f'watchlist:{uid}'
 def trades_key(uid):       return f'trades:{uid}'
+def users_index_key():     return 'users_index'   # list of all email addresses
 
 # ── paths ──────────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -118,6 +119,13 @@ def index():
     resp.headers['Expires']       = '0'
     return resp
 
+@app.route('/admin')
+def admin_page():
+    resp = make_response(send_from_directory(BASE_DIR, 'admin.html'))
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Pragma']        = 'no-cache'
+    return resp
+
 @app.route('/static/<path:filename>')
 def static_files(filename):
     return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
@@ -174,6 +182,11 @@ def signup():
     user    = {'id':user_id,'email':email,'password':hash_password(password),
                'created':str(datetime.now())}
     kv_set(user_key(email), user)
+    # Maintain index of all users for admin listing
+    index = kv_get(users_index_key(), [])
+    if email not in index:
+        index.append(email)
+        kv_set(users_index_key(), index)
     return jsonify({'message':'Account created','user_id':user_id,'email':email})
 
 @app.route('/api/login', methods=['POST'])
@@ -334,6 +347,132 @@ def remove_watchlist(user_id, symbol):
 @app.route('/api/trades/<user_id>', methods=['GET'])
 def get_trades(user_id):
     return jsonify(kv_get(trades_key(user_id), []))
+
+# ── admin ──────────────────────────────────────────────────────────────────────
+ADMIN_UID  = 'superuser'
+ADMIN_PASS = 'June021999'
+ADMIN_TOKEN = hashlib.sha256(f'{ADMIN_UID}:{ADMIN_PASS}:apexwealth-admin'.encode()).hexdigest()
+
+def require_admin(req):
+    """Check Authorization: Bearer <token> header."""
+    auth = req.headers.get('Authorization','')
+    token = auth.replace('Bearer ','').strip()
+    return token == ADMIN_TOKEN
+
+@app.route('/api/admin/login', methods=['POST'])
+def admin_login():
+    data = request.get_json(silent=True) or {}
+    if data.get('uid') == ADMIN_UID and data.get('password') == ADMIN_PASS:
+        return jsonify({'token': ADMIN_TOKEN, 'message': 'Admin login successful'})
+    return jsonify({'error': 'Invalid admin credentials'}), 401
+
+@app.route('/api/admin/users', methods=['GET'])
+def admin_list_users():
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    emails = kv_get(users_index_key(), [])
+    users  = []
+    for email in emails:
+        u = kv_get(user_key(email))
+        if u:
+            users.append({
+                'id':       u.get('id',''),
+                'email':    u.get('email', email),
+                'created':  u.get('created',''),
+                # never expose password hash to admin UI
+            })
+    q = (request.args.get('q') or '').lower().strip()
+    if q:
+        users = [u for u in users if q in u['email'].lower()]
+    return jsonify(users)
+
+@app.route('/api/admin/users', methods=['POST'])
+def admin_create_user():
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    data     = request.get_json(silent=True) or {}
+    email    = str(data.get('email', '')).lower().strip()
+    password = str(data.get('password', ''))
+    if not email or not password:
+        return jsonify({'error': 'Email and password required'}), 400
+    if len(password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters'}), 400
+    if kv_get(user_key(email)):
+        return jsonify({'error': 'Email already registered'}), 409
+    user_id = str(uuid.uuid4())
+    user    = {'id': user_id, 'email': email, 'password': hash_password(password),
+               'created': str(datetime.now())}
+    kv_set(user_key(email), user)
+    index = kv_get(users_index_key(), [])
+    if email not in index:
+        index.append(email)
+        kv_set(users_index_key(), index)
+    return jsonify({'message': 'User created', 'user_id': user_id, 'email': email})
+
+@app.route('/api/admin/users/<user_id>', methods=['PUT'])
+def admin_edit_user(user_id):
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    data  = request.get_json(silent=True) or {}
+    # Find user by ID
+    emails = kv_get(users_index_key(), [])
+    target_email = None
+    for email in emails:
+        u = kv_get(user_key(email))
+        if u and u.get('id') == user_id:
+            target_email = email; break
+    if not target_email:
+        return jsonify({'error': 'User not found'}), 404
+    user = kv_get(user_key(target_email))
+    new_email    = str(data.get('email', target_email)).lower().strip()
+    new_password = str(data.get('password', '')).strip()
+    if new_password and len(new_password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters'}), 400
+    if new_password:
+        user['password'] = hash_password(new_password)
+    if new_email and new_email != target_email:
+        # Move user to new email key
+        if kv_get(user_key(new_email)):
+            return jsonify({'error': 'New email already in use'}), 409
+        user['email'] = new_email
+        kv_set(user_key(new_email), user)
+        kv_set(user_key(target_email), None)   # clear old key
+        index = kv_get(users_index_key(), [])
+        index = [e for e in index if e != target_email]
+        if new_email not in index:
+            index.append(new_email)
+        kv_set(users_index_key(), index)
+    else:
+        kv_set(user_key(target_email), user)
+    return jsonify({'message': 'User updated'})
+
+@app.route('/api/admin/users/<user_id>', methods=['DELETE'])
+def admin_delete_user(user_id):
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    emails = kv_get(users_index_key(), [])
+    target_email = None
+    for email in emails:
+        u = kv_get(user_key(email))
+        if u and u.get('id') == user_id:
+            target_email = email; break
+    if not target_email:
+        return jsonify({'error': 'User not found'}), 404
+    # Delete user data
+    kv_set(user_key(target_email), None)
+    kv_set(holdings_key(user_id),  None)
+    kv_set(watchlist_key(user_id), None)
+    kv_set(trades_key(user_id),    None)
+    index = [e for e in emails if e != target_email]
+    kv_set(users_index_key(), index)
+    return jsonify({'message': 'User deleted'})
+
+@app.route('/api/admin/stats', methods=['GET'])
+def admin_stats():
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    emails = kv_get(users_index_key(), [])
+    return jsonify({'total_users': len(emails)})
 
 # ── market data ────────────────────────────────────────────────────────────────
 @app.route('/api/quote/<symbol>', methods=['GET'])

@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<title>ApexWealth — Admin</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23c0392b'/><text x='7' y='22' font-size='18' fill='white' font-weight='900'>⚙</text></svg>"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0b0d12;
+    --surface:  #131720;
+    --card:     #1a1f2e;
+    --border:   rgba(255,255,255,.07);
+    --border2:  rgba(255,255,255,.12);
+    --text:     #e8eaf0;
+    --dim:      #7b8299;
+    --red:      #e74c3c;
+    --red-dim:  rgba(231,76,60,.15);
+    --green:    #27ae60;
+    --green-dim:rgba(39,174,96,.15);
+    --orange:   #f39c12;
+    --accent:   #c0392b;        /* deep red — admin danger palette */
+    --accent2:  #e74c3c;
+    --mono:     'JetBrains Mono', monospace;
+    --sans:     'Syne', sans-serif;
+  }
+
+  body { font-family: var(--sans); background: var(--bg); color: var(--text);
+         min-height: 100vh; font-size: 14px; }
+
+  /* ── LOGIN SCREEN ── */
+  #login-screen {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 30% 20%, rgba(192,57,43,.12) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 80%, rgba(231,76,60,.06) 0%, transparent 50%), var(--bg);
+  }
+  .login-box {
+    width: 380px; background: var(--surface);
+    border: 1px solid var(--border2); border-radius: 16px;
+    padding: 40px 36px; box-shadow: 0 32px 80px rgba(0,0,0,.5);
+  }
+  .login-logo {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 32px;
+  }
+  .login-logo-icon {
+    width: 44px; height: 44px; border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent), #8e1c11);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; flex-shrink: 0;
+  }
+  .login-logo-text { font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
+  .login-logo-sub  { font-size: 11px; color: var(--accent2); font-family: var(--mono);
+                     letter-spacing: .05em; text-transform: uppercase; margin-top: 1px; }
+  .login-title { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+  .login-sub   { font-size: 13px; color: var(--dim); margin-bottom: 28px; line-height: 1.5; }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--dim);
+                 text-transform: uppercase; letter-spacing: .06em; margin-bottom: 7px; }
+  .field input {
+    width: 100%; background: var(--card); border: 1px solid var(--border2);
+    border-radius: 9px; padding: 11px 14px; color: var(--text);
+    font-family: var(--mono); font-size: 13px; outline: none;
+    transition: border-color .15s;
+  }
+  .field input:focus { border-color: var(--accent2); }
+
+  .btn-login {
+    width: 100%; background: linear-gradient(135deg, var(--accent), #8e1c11);
+    border: none; border-radius: 9px; padding: 12px; color: #fff;
+    font-family: var(--sans); font-size: 14px; font-weight: 600;
+    cursor: pointer; margin-top: 8px; transition: opacity .15s;
+  }
+  .btn-login:hover { opacity: .88; }
+  .login-error {
+    font-size: 12px; color: var(--accent2); background: var(--red-dim);
+    border: 1px solid rgba(231,76,60,.25); border-radius: 8px;
+    padding: 9px 12px; margin-top: 12px; display: none;
+  }
+  .login-error.show { display: block; }
+
+  /* ── MAIN ADMIN SHELL ── */
+  #admin-shell { display: none; min-height: 100vh; flex-direction: column; }
+
+  .admin-topbar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 28px; height: 56px; display: flex; align-items: center; gap: 16px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .topbar-logo { display: flex; align-items: center; gap: 10px; }
+  .topbar-logo-icon {
+    width: 30px; height: 30px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), #8e1c11);
+    display: flex; align-items: center; justify-content: center; font-size: 15px;
+  }
+  .topbar-logo-name { font-size: 15px; font-weight: 700; }
+  .topbar-badge {
+    font-size: 10px; font-family: var(--mono); background: var(--red-dim);
+    color: var(--accent2); border: 1px solid rgba(231,76,60,.3);
+    padding: 2px 8px; border-radius: 99px; letter-spacing: .08em; text-transform: uppercase;
+  }
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .topbar-stat { font-family: var(--mono); font-size: 12px; color: var(--dim); }
+  .topbar-stat span { color: var(--text); font-weight: 600; }
+  .btn-logout {
+    background: transparent; border: 1px solid var(--border2); border-radius: 7px;
+    padding: 6px 14px; color: var(--dim); font-family: var(--sans); font-size: 13px;
+    cursor: pointer; transition: all .15s;
+  }
+  .btn-logout:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  /* ── TABS ── */
+  .admin-tabs {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 28px; display: flex; gap: 0;
+  }
+  .admin-tab {
+    padding: 14px 20px; font-size: 13px; font-weight: 500; color: var(--dim);
+    border-bottom: 2px solid transparent; cursor: pointer; transition: all .15s;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .admin-tab:hover { color: var(--text); }
+  .admin-tab.active { color: var(--accent2); border-bottom-color: var(--accent2); }
+
+  /* ── CONTENT ── */
+  .admin-content { padding: 28px; max-width: 1100px; flex: 1; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── SECTION CARDS ── */
+  .admin-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; padding: 24px 26px; margin-bottom: 22px;
+  }
+  .admin-card-title {
+    font-size: 15px; font-weight: 700; margin-bottom: 4px;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .admin-card-sub { font-size: 12px; color: var(--dim); margin-bottom: 22px; }
+
+  /* ── FORM GRID ── */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; }
+  .form-field label { display: block; font-size: 11px; font-weight: 600; color: var(--dim);
+                      text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .form-field input {
+    width: 100%; background: var(--card); border: 1px solid var(--border2);
+    border-radius: 8px; padding: 10px 13px; color: var(--text);
+    font-family: var(--mono); font-size: 13px; outline: none; transition: border-color .15s;
+  }
+  .form-field input:focus { border-color: var(--accent2); }
+
+  .btn { border: none; border-radius: 8px; padding: 10px 18px; font-family: var(--sans);
+         font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s;
+         display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), #8e1c11); color: #fff; }
+  .btn-primary:hover { opacity: .88; }
+  .btn-ghost  { background: transparent; border: 1px solid var(--border2); color: var(--dim); }
+  .btn-ghost:hover { border-color: var(--border2); color: var(--text); background: var(--card); }
+  .btn-danger { background: var(--red-dim); border: 1px solid rgba(231,76,60,.25); color: var(--accent2); }
+  .btn-danger:hover { background: var(--accent2); color: #fff; border-color: var(--accent2); }
+  .btn-edit   { background: rgba(39,174,96,.12); border: 1px solid rgba(39,174,96,.25); color: var(--green); }
+  .btn-edit:hover { background: var(--green); color: #fff; border-color: var(--green); }
+  .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 6px; }
+
+  .form-error { font-size: 12px; color: var(--accent2); background: var(--red-dim);
+                border: 1px solid rgba(231,76,60,.25); border-radius: 7px;
+                padding: 8px 12px; margin-top: 10px; display: none; }
+  .form-error.show { display: block; }
+  .form-success { font-size: 12px; color: var(--green); background: var(--green-dim);
+                  border: 1px solid rgba(39,174,96,.25); border-radius: 7px;
+                  padding: 8px 12px; margin-top: 10px; display: none; }
+  .form-success.show { display: block; }
+
+  /* ── SEARCH BAR ── */
+  .search-bar { display: flex; gap: 10px; margin-bottom: 18px; align-items: center; }
+  .search-input-wrap { position: relative; flex: 1; max-width: 340px; }
+  .search-input-wrap svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+                            opacity: .4; pointer-events: none; }
+  .search-input {
+    width: 100%; background: var(--card); border: 1px solid var(--border2);
+    border-radius: 8px; padding: 9px 13px 9px 34px; color: var(--text);
+    font-family: var(--mono); font-size: 13px; outline: none; transition: border-color .15s;
+  }
+  .search-input:focus { border-color: var(--accent2); }
+  .user-count { font-family: var(--mono); font-size: 12px; color: var(--dim);
+                margin-left: auto; }
+
+  /* ── TABLE ── */
+  .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; }
+  thead tr { background: var(--card); }
+  th { padding: 11px 14px; text-align: left; font-size: 11px; font-weight: 600;
+       color: var(--dim); text-transform: uppercase; letter-spacing: .06em;
+       border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 13px 14px; font-size: 13px; border-bottom: 1px solid var(--border);
+       vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(255,255,255,.02); }
+  .td-mono { font-family: var(--mono); font-size: 12px; }
+  .td-dim  { color: var(--dim); }
+  .td-actions { display: flex; gap: 7px; }
+  .empty-row td { text-align: center; padding: 48px 20px; color: var(--dim); font-size: 13px; }
+
+  /* ── MODAL ── */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    backdrop-filter: blur(4px); z-index: 500;
+    display: none; align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 14px; padding: 28px; width: 420px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5);
+  }
+  .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .modal-sub   { font-size: 12px; color: var(--dim); margin-bottom: 22px; }
+  .modal-fields { display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+  /* ── SPINNER ── */
+  .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.2);
+             border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9999;
+    background: var(--card); border: 1px solid var(--border2);
+    border-radius: 10px; padding: 12px 18px; font-size: 13px;
+    display: flex; align-items: center; gap: 9px;
+    transform: translateY(80px); opacity: 0;
+    transition: transform .25s, opacity .25s; pointer-events: none;
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
+  }
+  #toast.show { transform: translateY(0); opacity: 1; }
+  #toast.ok   { border-left: 3px solid var(--green); }
+  #toast.err  { border-left: 3px solid var(--accent2); }
+</style>
+</head>
+<body>
+
+<!-- ── LOGIN SCREEN ─────────────────────────────────────────────────────────── -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="login-logo-icon">⚙</div>
+      <div>
+        <div class="login-logo-text">ApexWealth</div>
+        <div class="login-logo-sub">Admin Console</div>
+      </div>
+    </div>
+    <div class="login-title">Superuser Access</div>
+    <div class="login-sub">This panel is restricted to authorised administrators only. Unauthorised access is prohibited.</div>
+    <form id="login-form" onsubmit="doAdminLogin(event)">
+      <div class="field">
+        <label>User ID</label>
+        <input id="admin-uid" type="text" autocomplete="username" placeholder="superuser" required/>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input id="admin-pass" type="password" autocomplete="current-password" placeholder="••••••••" required/>
+      </div>
+      <button class="btn-login" type="submit" id="login-btn">Sign in to Admin</button>
+      <div class="login-error" id="login-error"></div>
+    </form>
+  </div>
+</div>
+
+<!-- ── ADMIN SHELL ───────────────────────────────────────────────────────────── -->
+<div id="admin-shell">
+
+  <!-- Topbar -->
+  <div class="admin-topbar">
+    <div class="topbar-logo">
+      <div class="topbar-logo-icon">⚙</div>
+      <div class="topbar-logo-name">ApexWealth</div>
+      <div class="topbar-badge">Admin Console</div>
+    </div>
+    <div class="topbar-right">
+      <div class="topbar-stat">Total Users: <span id="stat-total">—</span></div>
+      <button class="btn-logout" onclick="doAdminLogout()">Sign Out</button>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="admin-tabs">
+    <div class="admin-tab active" onclick="switchTab('members')" id="tab-members">
+      👥 Members
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="admin-content">
+
+    <!-- Members Tab -->
+    <div class="tab-pane active" id="pane-members">
+
+      <!-- Create New User -->
+      <div class="admin-card">
+        <div class="admin-card-title">➕ Create New User</div>
+        <div class="admin-card-sub">Add a new member account. They can log in immediately after creation.</div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label>Email / Username</label>
+            <input id="new-email" type="text" placeholder="user@example.com"/>
+          </div>
+          <div class="form-field">
+            <label>Password</label>
+            <input id="new-pass" type="password" placeholder="Min. 6 characters"/>
+          </div>
+          <button class="btn btn-primary" onclick="createUser()">
+            <span>Create Account</span>
+          </button>
+        </div>
+        <div class="form-error"   id="create-error"></div>
+        <div class="form-success" id="create-success"></div>
+      </div>
+
+      <!-- User List -->
+      <div class="admin-card">
+        <div class="admin-card-title">🗂 Manage User Accounts</div>
+        <div class="admin-card-sub">Search, edit, or remove member accounts.</div>
+
+        <div class="search-bar">
+          <div class="search-input-wrap">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            <input class="search-input" id="user-search" type="text"
+                   placeholder="Search by email…" oninput="filterUsers()"/>
+          </div>
+          <button class="btn btn-ghost" onclick="loadUsers()" style="font-size:12px;padding:9px 14px">
+            ↻ Refresh
+          </button>
+          <div class="user-count" id="user-count">— users</div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:44px">#</th>
+                <th>ID</th>
+                <th>Email / Username</th>
+                <th>Member Since</th>
+                <th style="width:120px">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody">
+              <tr class="empty-row"><td colspan="5">Loading users…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /members pane -->
+
+  </div><!-- /admin-content -->
+</div><!-- /admin-shell -->
+
+<!-- ── EDIT USER MODAL ────────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal-box">
+    <div class="modal-title">Edit User</div>
+    <div class="modal-sub" id="edit-modal-sub">Update email or reset password.</div>
+    <div class="modal-fields">
+      <div class="form-field">
+        <label>Email / Username</label>
+        <input id="edit-email" type="text"/>
+      </div>
+      <div class="form-field">
+        <label>New Password <span style="color:var(--dim);font-weight:400">(leave blank to keep current)</span></label>
+        <input id="edit-pass" type="password" placeholder="New password…"/>
+      </div>
+    </div>
+    <div class="form-error"   id="edit-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEditModal()">Cancel</button>
+      <button class="btn btn-primary" id="edit-save-btn" onclick="saveEditUser()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── DELETE CONFIRM MODAL ───────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="delete-modal">
+  <div class="modal-box">
+    <div class="modal-title">Delete User?</div>
+    <div class="modal-sub" id="delete-modal-sub">
+      This will permanently delete the user and all their holdings, watchlist, and trade history.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeDeleteModal()">Cancel</button>
+      <button class="btn btn-danger" id="delete-confirm-btn" onclick="confirmDelete()">Yes, Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOAST ──────────────────────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script>
+const API = '/api';
+let ADMIN_TOKEN = null;
+let allUsers    = [];
+let editUserId  = null;
+let deleteUserId = null;
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function toast(msg, type = 'ok') {
+  const el = document.getElementById('toast');
+  el.textContent = (type === 'ok' ? '✓ ' : '✗ ') + msg;
+  el.className   = `show ${type}`;
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.className = ''; }, 3200);
+}
+
+async function adminFetch(path, method = 'GET', body = null) {
+  const opts = {
+    method,
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${ADMIN_TOKEN}`
+    }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(`${API}${path}`, opts);
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('json')) throw new Error(`Server returned non-JSON (${r.status})`);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`);
+  return d;
+}
+
+// ── login / logout ────────────────────────────────────────────────────────────
+async function doAdminLogin(e) {
+  e.preventDefault();
+  const uid  = document.getElementById('admin-uid').value.trim();
+  const pass = document.getElementById('admin-pass').value;
+  const errEl = document.getElementById('login-error');
+  const btn   = document.getElementById('login-btn');
+  errEl.className = 'login-error';
+  btn.innerHTML = '<div class="spinner" style="margin:0 auto;border-top-color:#fff"></div>';
+  try {
+    const d = await (await fetch(`${API}/admin/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid, password: pass })
+    })).json();
+    if (!d.token) throw new Error(d.error || 'Login failed');
+    ADMIN_TOKEN = d.token;
+    sessionStorage.setItem('apex_admin_token', ADMIN_TOKEN);
+    enterAdmin();
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.className   = 'login-error show';
+    btn.textContent   = 'Sign in to Admin';
+  }
+}
+
+function doAdminLogout() {
+  sessionStorage.removeItem('apex_admin_token');
+  ADMIN_TOKEN = null;
+  allUsers    = [];
+  document.getElementById('admin-shell').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('admin-uid').value  = '';
+  document.getElementById('admin-pass').value = '';
+  document.getElementById('login-error').className = 'login-error';
+}
+
+function enterAdmin() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('admin-shell').style.display  = 'flex';
+  document.getElementById('admin-shell').style.flexDirection = 'column';
+  loadStats();
+  loadUsers();
+}
+
+// ── tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById(`tab-${name}`)?.classList.add('active');
+  document.getElementById(`pane-${name}`)?.classList.add('active');
+}
+
+// ── stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const d = await adminFetch('/admin/stats');
+    document.getElementById('stat-total').textContent = d.total_users;
+  } catch {}
+}
+
+// ── user list ─────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  const tbody = document.getElementById('users-tbody');
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Loading…</td></tr>';
+  try {
+    allUsers = await adminFetch('/admin/users');
+    renderUsers(allUsers);
+    loadStats();
+  } catch(err) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="5" style="color:var(--accent2)">Error: ${err.message}</td></tr>`;
+  }
+}
+
+function renderUsers(users) {
+  const tbody = document.getElementById('users-tbody');
+  document.getElementById('user-count').textContent = `${users.length} user${users.length !== 1 ? 's' : ''}`;
+  if (!users.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No users found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = users.map((u, i) => `
+    <tr>
+      <td class="td-mono td-dim">${i + 1}</td>
+      <td class="td-mono td-dim" style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escH(u.id)}">${escH(u.id.slice(0,12))}…</td>
+      <td style="font-weight:500">${escH(u.email)}</td>
+      <td class="td-mono td-dim">${fmtDate(u.created)}</td>
+      <td>
+        <div class="td-actions">
+          <button class="btn btn-edit btn-sm" onclick="openEditModal('${escH(u.id)}','${escH(u.email)}')" title="Edit user">✏ Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="openDeleteModal('${escH(u.id)}','${escH(u.email)}')" title="Delete user">🗑</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function filterUsers() {
+  const q = document.getElementById('user-search').value.toLowerCase().trim();
+  renderUsers(q ? allUsers.filter(u => u.email.toLowerCase().includes(q)) : allUsers);
+}
+
+function fmtDate(str) {
+  if (!str) return '—';
+  try {
+    const d = new Date(str);
+    return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })
+         + ' ' + d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: false });
+  } catch { return str.slice(0, 16); }
+}
+
+function escH(s) {
+  return String(s ?? '').replace(/[&<>'"]/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c]));
+}
+
+// ── create user ───────────────────────────────────────────────────────────────
+async function createUser() {
+  const email = document.getElementById('new-email').value.trim().toLowerCase();
+  const pass  = document.getElementById('new-pass').value;
+  const errEl = document.getElementById('create-error');
+  const okEl  = document.getElementById('create-success');
+  errEl.className = 'form-error'; okEl.className = 'form-success';
+  if (!email || !pass) { errEl.textContent = 'Both email and password are required.'; errEl.className = 'form-error show'; return; }
+  try {
+    const d = await adminFetch('/admin/users', 'POST', { email, password: pass });
+    okEl.textContent = `✓ Account created for ${email}`;
+    okEl.className   = 'form-success show';
+    document.getElementById('new-email').value = '';
+    document.getElementById('new-pass').value  = '';
+    setTimeout(() => { okEl.className = 'form-success'; }, 3500);
+    await loadUsers();
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.className   = 'form-error show';
+  }
+}
+
+// ── edit user modal ───────────────────────────────────────────────────────────
+function openEditModal(userId, email) {
+  editUserId = userId;
+  document.getElementById('edit-email').value = email;
+  document.getElementById('edit-pass').value  = '';
+  document.getElementById('edit-modal-sub').textContent = `Editing account: ${email}`;
+  document.getElementById('edit-error').className = 'form-error';
+  document.getElementById('edit-modal').classList.add('open');
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').classList.remove('open');
+  editUserId = null;
+}
+
+async function saveEditUser() {
+  const email = document.getElementById('edit-email').value.trim().toLowerCase();
+  const pass  = document.getElementById('edit-pass').value.trim();
+  const errEl = document.getElementById('edit-error');
+  const btn   = document.getElementById('edit-save-btn');
+  errEl.className = 'form-error';
+  if (!email) { errEl.textContent = 'Email cannot be empty.'; errEl.className = 'form-error show'; return; }
+  const orig = btn.textContent;
+  btn.innerHTML = '<div class="spinner"></div>';
+  btn.disabled  = true;
+  try {
+    const body = { email };
+    if (pass) body.password = pass;
+    await adminFetch(`/admin/users/${editUserId}`, 'PUT', body);
+    closeEditModal();
+    toast('User updated successfully');
+    await loadUsers();
+  } catch(err) {
+    errEl.textContent = err.message;
+    errEl.className   = 'form-error show';
+  } finally {
+    btn.innerHTML = orig;
+    btn.disabled  = false;
+  }
+}
+
+// ── delete user modal ─────────────────────────────────────────────────────────
+function openDeleteModal(userId, email) {
+  deleteUserId = userId;
+  document.getElementById('delete-modal-sub').textContent =
+    `This will permanently delete "${email}" and all their data (holdings, watchlist, trades). This cannot be undone.`;
+  document.getElementById('delete-modal').classList.add('open');
+}
+
+function closeDeleteModal() {
+  document.getElementById('delete-modal').classList.remove('open');
+  deleteUserId = null;
+}
+
+async function confirmDelete() {
+  const btn  = document.getElementById('delete-confirm-btn');
+  const orig = btn.textContent;
+  btn.innerHTML = '<div class="spinner"></div>';
+  btn.disabled  = true;
+  try {
+    await adminFetch(`/admin/users/${deleteUserId}`, 'DELETE');
+    closeDeleteModal();
+    toast('User deleted');
+    await loadUsers();
+  } catch(err) {
+    closeDeleteModal();
+    toast(err.message, 'err');
+  } finally {
+    btn.textContent = orig;
+    btn.disabled    = false;
+  }
+}
+
+// ── modal close on overlay click ──────────────────────────────────────────────
+document.querySelectorAll('.modal-overlay').forEach(m =>
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
+
+// ── session restore ───────────────────────────────────────────────────────────
+window.onload = () => {
+  const saved = sessionStorage.getItem('apex_admin_token');
+  if (saved) {
+    ADMIN_TOKEN = saved;
+    enterAdmin();
+  }
+};
+</script>
+</body>
+</html>
