@@ -86,7 +86,6 @@
 
   /* ── MAIN ADMIN SHELL ── */
   #admin-shell { display: none; min-height: 100vh; flex-direction: column; }
-  #admin-shell.visible { display: flex; }
 
   .admin-topbar {
     background: var(--surface); border-bottom: 1px solid var(--border);
@@ -302,6 +301,16 @@
     <!-- Members Tab -->
     <div class="tab-pane active" id="pane-members">
 
+      <!-- Rebuild Index Banner (shown when users_index is empty) -->
+      <div id="rebuild-banner" style="display:none;align-items:center;gap:14px;background:rgba(243,156,18,.1);border:1px solid rgba(243,156,18,.3);border-radius:12px;padding:14px 18px;margin-bottom:18px;font-size:13px;">
+        <span style="font-size:18px">⚠</span>
+        <div style="flex:1">
+          <strong style="color:#f39c12">User index is empty.</strong>
+          <span style="color:var(--dim);margin-left:6px">Existing users registered before the index was introduced won't appear in the list. Click Rebuild to scan and restore them.</span>
+        </div>
+        <button id="rebuild-btn" class="btn btn-ghost" onclick="rebuildIndex()" style="font-size:12px;padding:7px 14px;border-color:rgba(243,156,18,.5);color:#f39c12">Rebuild Index</button>
+      </div>
+
       <!-- Create New User -->
       <div class="admin-card">
         <div class="admin-card-title">➕ Create New User</div>
@@ -339,9 +348,6 @@
           <button class="btn btn-ghost" onclick="loadUsers()" style="font-size:12px;padding:9px 14px">
             ↻ Refresh
           </button>
-          <button class="btn btn-ghost" onclick="rebuildIndex()" id="rebuild-btn" style="font-size:12px;padding:9px 14px;border-color:var(--orange);color:var(--orange)" title="Rebuild user index — run this once if existing users are not showing up">
-            ⚙ Rebuild Index
-          </button>
           <div class="user-count" id="user-count">— users</div>
         </div>
 
@@ -352,13 +358,13 @@
                 <th style="width:44px">#</th>
                 <th>ID</th>
                 <th>Email / Username</th>
-                <th>Name</th>
                 <th>Member Since</th>
-                <th style="width:120px">Actions</th>
+                <th>Password</th>
+                <th style="width:130px">Actions</th>
               </tr>
             </thead>
             <tbody id="users-tbody">
-              <tr class="empty-row"><td colspan="6">Loading users…</td></tr>
+              <tr class="empty-row"><td colspan="6">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -416,63 +422,66 @@ let editUserId   = null;
 let deleteUserId = null;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-function toast(msg, type = 'ok') {
+function showToast(msg, type) {
   const el = document.getElementById('toast');
-  el.textContent = (type === 'ok' ? '✓ ' : '✗ ') + msg;
-  el.className   = `show ${type}`;
+  el.textContent = (type === 'ok' ? '✓  ' : '✗  ') + msg;
+  el.className = 'show ' + (type || 'ok');
   clearTimeout(el._t);
   el._t = setTimeout(() => { el.className = ''; }, 3200);
 }
 
 function escH(s) {
-  return String(s ?? '').replace(/[&<>'"]/g,
-    c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+  return String(s == null ? '' : s).replace(/[&<>'"]/g,
+    function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]; });
 }
 
 function fmtDate(str) {
   if (!str) return '—';
   try {
-    const d   = new Date(str);
-    const pad = n => String(n).padStart(2,'0');
-    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
-         + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  } catch { return String(str).slice(0,16); }
+    var d = new Date(str);
+    var p = function(n){ return String(n).padStart(2,'0'); };
+    return p(d.getDate())+'/'+p(d.getMonth()+1)+'/'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
+  } catch(e) { return String(str).slice(0,16); }
 }
 
-// Core fetch wrapper — always checks Content-Type before calling .json()
-async function adminFetch(path, method = 'GET', body = null) {
-  const opts = {
-    method,
+// Safe fetch — always checks Content-Type, provides clear error messages
+async function adminFetch(path, method, body) {
+  method = method || 'GET';
+  var opts = {
+    method: method,
     headers: {
       'Content-Type':  'application/json',
-      'Authorization': `Bearer ${ADMIN_TOKEN}`
+      'Authorization': 'Bearer ' + ADMIN_TOKEN
     }
   };
-  if (body !== null) opts.body = JSON.stringify(body);
-  let r;
-  try {
-    r = await fetch(`${API}${path}`, opts);
-  } catch (netErr) {
-    throw new Error('Network error — check connection or Vercel deployment.');
+  if (body != null) opts.body = JSON.stringify(body);
+  var r;
+  try { r = await fetch(API + path, opts); }
+  catch(e) { throw new Error('Network error — check connection.'); }
+  var ct = r.headers.get('content-type') || '';
+  if (ct.indexOf('application/json') === -1) {
+    throw new Error('API not reachable (HTTP ' + r.status + '). Check Vercel KV env vars are set and redeploy.');
   }
-  const ct = r.headers.get('content-type') || '';
-  if (!ct.includes('application/json')) {
-    throw new Error(`API unreachable (HTTP ${r.status}). Check Vercel KV env vars and redeploy.`);
-  }
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`);
+  var d = await r.json();
+  if (!r.ok) throw new Error(d.error || ('Request failed (' + r.status + ')'));
   return d;
 }
 
-// ── show / hide screens ───────────────────────────────────────────────────────
+// ── screen switching — use style properties individually, never cssText ───────
 function showLogin() {
-  document.getElementById('login-screen').style.display = 'flex';
-  document.getElementById('admin-shell').classList.remove('visible');
+  var ls = document.getElementById('login-screen');
+  var sh = document.getElementById('admin-shell');
+  ls.style.display = 'flex';
+  sh.style.display = 'none';
+  sh.style.flexDirection = '';
 }
 
 function showShell() {
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('admin-shell').classList.add('visible');
+  var ls = document.getElementById('login-screen');
+  var sh = document.getElementById('admin-shell');
+  ls.style.display = 'none';
+  sh.style.display = 'flex';
+  sh.style.flexDirection = 'column';
   loadStats();
   loadUsers();
 }
@@ -480,38 +489,39 @@ function showShell() {
 // ── login ─────────────────────────────────────────────────────────────────────
 async function doAdminLogin(e) {
   e.preventDefault();
-  const uid   = document.getElementById('admin-uid').value.trim();
-  const pass  = document.getElementById('admin-pass').value;
-  const errEl = document.getElementById('login-error');
-  const btn   = document.getElementById('login-btn');
+  var uid    = document.getElementById('admin-uid').value.trim();
+  var pass   = document.getElementById('admin-pass').value;
+  var errEl  = document.getElementById('login-error');
+  var btn    = document.getElementById('login-btn');
 
   errEl.className = 'login-error';
-  btn.disabled    = true;
-  btn.innerHTML   = '<div class="spinner" style="margin:0 auto;border-top-color:#fff"></div>';
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="margin:0 auto;border-top-color:#fff"></div>';
 
   try {
-    const r = await fetch(`${API}/admin/login`, {
-      method:  'POST',
+    var r = await fetch(API + '/admin/login', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ uid, password: pass })
+      body: JSON.stringify({ uid: uid, password: pass })
     });
-    const ct = r.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) {
-      throw new Error(
-        `API not responding (HTTP ${r.status}). ` +
-        'Ensure Vercel KV env vars are set and the project is redeployed.'
-      );
+    var ct = r.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') === -1) {
+      throw new Error('API not reachable (HTTP ' + r.status + '). Ensure Vercel KV env vars are set and the project is redeployed.');
     }
-    const d = await r.json();
+    var d = await r.json();
     if (!r.ok || !d.token) throw new Error(d.error || 'Login failed');
     ADMIN_TOKEN = d.token;
     sessionStorage.setItem('apex_admin_token', ADMIN_TOKEN);
+    // If index_size is 0, show a one-time rebuild notice in the shell
+    if (d.index_size === 0) {
+      sessionStorage.setItem('apex_admin_show_rebuild', '1');
+    }
     showShell();
-  } catch (err) {
+  } catch(err) {
     errEl.textContent = err.message;
-    errEl.className   = 'login-error show';
+    errEl.className = 'login-error show';
   } finally {
-    btn.disabled  = false;
+    btn.disabled = false;
     btn.innerHTML = 'Sign in to Admin';
   }
 }
@@ -519,8 +529,9 @@ async function doAdminLogin(e) {
 // ── logout ────────────────────────────────────────────────────────────────────
 function doAdminLogout() {
   sessionStorage.removeItem('apex_admin_token');
+  sessionStorage.removeItem('apex_admin_show_rebuild');
   ADMIN_TOKEN = null;
-  allUsers    = [];
+  allUsers = [];
   document.getElementById('admin-uid').value  = '';
   document.getElementById('admin-pass').value = '';
   document.getElementById('login-error').className = 'login-error';
@@ -529,100 +540,108 @@ function doAdminLogout() {
 
 // ── tabs ──────────────────────────────────────────────────────────────────────
 function switchTab(name) {
-  document.querySelectorAll('.admin-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.getElementById(`tab-${name}`)?.classList.add('active');
-  document.getElementById(`pane-${name}`)?.classList.add('active');
+  document.querySelectorAll('.admin-tab').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.tab-pane').forEach(function(p){ p.classList.remove('active'); });
+  var t = document.getElementById('tab-' + name);
+  var p = document.getElementById('pane-' + name);
+  if (t) t.classList.add('active');
+  if (p) p.classList.add('active');
 }
 
 // ── stats ─────────────────────────────────────────────────────────────────────
 async function loadStats() {
   try {
-    const d = await adminFetch('/admin/stats');
-    document.getElementById('stat-total').textContent = d.total_users ?? '—';
-  } catch { /* non-critical */ }
+    var d = await adminFetch('/admin/stats');
+    document.getElementById('stat-total').textContent = d.total_users != null ? d.total_users : '—';
+  } catch(e) { /* non-critical */ }
+}
+
+// ── rebuild index banner ──────────────────────────────────────────────────────
+function showRebuildBanner() {
+  var banner = document.getElementById('rebuild-banner');
+  if (banner) banner.style.display = 'flex';
+}
+
+async function rebuildIndex() {
+  var btn = document.getElementById('rebuild-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Rebuilding…'; }
+  try {
+    var d = await adminFetch('/admin/rebuild-index', 'POST', {});
+    sessionStorage.removeItem('apex_admin_show_rebuild');
+    var banner = document.getElementById('rebuild-banner');
+    if (banner) banner.style.display = 'none';
+    showToast(d.message || 'Index rebuilt', 'ok');
+    await loadUsers();
+  } catch(err) {
+    showToast(err.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Rebuild Now'; }
+  }
 }
 
 // ── user list ─────────────────────────────────────────────────────────────────
 async function loadUsers() {
-  const tbody = document.getElementById('users-tbody');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Loading...</td></tr>';
+  var tbody = document.getElementById('users-tbody');
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Loading…</td></tr>';
   try {
     allUsers = await adminFetch('/admin/users');
     renderUsers(allUsers);
     document.getElementById('stat-total').textContent = allUsers.length;
-  } catch (err) {
-    tbody.innerHTML = `
-      <tr class="empty-row">
-        <td colspan="6" style="color:var(--accent2)">
-          &#x2717; ${escH(err.message)}<br>
-          <small style="color:var(--dim);line-height:2">
-            If KV is connected, try clicking <b>Refresh</b>. If users registered before the index was set up, click <b>⚙ Rebuild Index</b>.
-          </small>
-        </td>
-      </tr>`;
+    // Show rebuild banner if index was empty at login
+    if (sessionStorage.getItem('apex_admin_show_rebuild') === '1' || allUsers.length === 0) {
+      showRebuildBanner();
+    }
+  } catch(err) {
+    tbody.innerHTML =
+      '<tr class="empty-row"><td colspan="6" style="color:var(--accent2)">' +
+      '&#x2717; ' + escH(err.message) + '<br>' +
+      '<small style="color:var(--dim);line-height:2">Check Vercel KV is connected. Click Refresh to retry.</small>' +
+      '</td></tr>';
   }
 }
 
 function renderUsers(users) {
-  const tbody = document.getElementById('users-tbody');
+  var tbody = document.getElementById('users-tbody');
   document.getElementById('user-count').textContent =
-    `${users.length} user${users.length !== 1 ? 's' : ''}`;
+    users.length + ' user' + (users.length !== 1 ? 's' : '');
   if (!users.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No users found.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No users found. Use the Rebuild Index button above if users exist in KV.</td></tr>';
     return;
   }
-  tbody.innerHTML = users.map((u, i) => `
-    <tr>
-      <td class="td-mono td-dim">${i + 1}</td>
-      <td class="td-mono td-dim"
-          style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-          title="${escH(u.id)}">${u.id ? escH(u.id.slice(0,8)) + '…' : '—'}</td>
-      <td style="font-weight:500">${escH(u.email)}</td>
-      <td class="td-dim" style="font-size:12px">${escH(u.name || '—')}</td>
-      <td class="td-mono td-dim">${fmtDate(u.created)}</td>
-      <td>
-        <div class="td-actions">
-          <button class="btn btn-edit btn-sm"
-            onclick="openEditModal('${escH(u.id)}','${escH(u.email)}')"
-            title="Edit">&#x270F; Edit</button>
-          <button class="btn btn-danger btn-sm"
-            onclick="openDeleteModal('${escH(u.id)}','${escH(u.email)}')"
-            title="Delete">&#x1F5D1;</button>
-        </div>
-      </td>
-    </tr>`).join('');
+  var rows = [];
+  users.forEach(function(u, i) {
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="td-mono td-dim">' + (i+1) + '</td>' +
+      '<td class="td-mono td-dim" style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escH(u.id) + '">' + escH((u.id||'').slice(0,12)) + '…</td>' +
+      '<td style="font-weight:500">' + escH(u.email) + '</td>' +
+      '<td class="td-mono td-dim">' + fmtDate(u.created) + '</td>' +
+      '<td class="td-mono td-dim" style="letter-spacing:.1em">••••••••</td>' +
+      '<td><div class="td-actions">' +
+        '<button class="btn btn-edit btn-sm" data-uid="' + escH(u.id) + '" data-email="' + escH(u.email) + '" title="Edit">✏ Edit</button>' +
+        '<button class="btn btn-danger btn-sm" data-uid="' + escH(u.id) + '" data-email="' + escH(u.email) + '" title="Delete">🗑</button>' +
+      '</div></td>';
+    // Wire up buttons via event listeners to avoid quote issues
+    var btns = tr.querySelectorAll('button');
+    btns[0].addEventListener('click', (function(uid, email){ return function(){ openEditModal(uid, email); }; })(u.id, u.email));
+    btns[1].addEventListener('click', (function(uid, email){ return function(){ openDeleteModal(uid, email); }; })(u.id, u.email));
+    rows.push(tr);
+  });
+  tbody.innerHTML = '';
+  rows.forEach(function(tr){ tbody.appendChild(tr); });
 }
 
 function filterUsers() {
-  const q = document.getElementById('user-search').value.toLowerCase().trim();
-  renderUsers(q ? allUsers.filter(u => u.email.toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q)) : allUsers);
-}
-
-// ── rebuild index ─────────────────────────────────────────────────────────────
-async function rebuildIndex() {
-  const btn = document.getElementById('rebuild-btn');
-  const orig = btn.innerHTML;
-  btn.disabled  = true;
-  btn.innerHTML = '<div class="spinner" style="margin:0 auto;width:14px;height:14px;border-width:2px"></div>';
-  try {
-    const d = await adminFetch('/admin/rebuild-index', 'POST', {});
-    toast(`Index rebuilt — ${d.total ?? '?'} users found`);
-    await loadUsers();
-  } catch (err) {
-    toast(err.message, 'err');
-  } finally {
-    btn.innerHTML = orig;
-    btn.disabled  = false;
-  }
+  var q = document.getElementById('user-search').value.toLowerCase().trim();
+  renderUsers(q ? allUsers.filter(function(u){ return u.email.toLowerCase().indexOf(q) !== -1; }) : allUsers);
 }
 
 // ── create user ───────────────────────────────────────────────────────────────
 async function createUser() {
-  const email = document.getElementById('new-email').value.trim().toLowerCase();
-  const pass  = document.getElementById('new-pass').value;
-  const errEl = document.getElementById('create-error');
-  const okEl  = document.getElementById('create-success');
+  var email  = document.getElementById('new-email').value.trim().toLowerCase();
+  var pass   = document.getElementById('new-pass').value;
+  var errEl  = document.getElementById('create-error');
+  var okEl   = document.getElementById('create-success');
   errEl.className = 'form-error';
   okEl.className  = 'form-success';
   if (!email || !pass) {
@@ -631,14 +650,14 @@ async function createUser() {
     return;
   }
   try {
-    await adminFetch('/admin/users', 'POST', { email, password: pass });
-    okEl.textContent = `Account created for ${email}`;
+    await adminFetch('/admin/users', 'POST', { email: email, password: pass });
+    okEl.textContent = 'Account created for ' + email;
     okEl.className   = 'form-success show';
     document.getElementById('new-email').value = '';
     document.getElementById('new-pass').value  = '';
-    setTimeout(() => { okEl.className = 'form-success'; }, 3500);
+    setTimeout(function(){ okEl.className = 'form-success'; }, 3500);
     await loadUsers();
-  } catch (err) {
+  } catch(err) {
     errEl.textContent = err.message;
     errEl.className   = 'form-error show';
   }
@@ -649,38 +668,36 @@ function openEditModal(userId, email) {
   editUserId = userId;
   document.getElementById('edit-email').value = email;
   document.getElementById('edit-pass').value  = '';
-  document.getElementById('edit-modal-sub').textContent = `Editing account: ${email}`;
+  document.getElementById('edit-modal-sub').textContent = 'Editing account: ' + email;
   document.getElementById('edit-error').className = 'form-error';
   document.getElementById('edit-modal').classList.add('open');
 }
-
 function closeEditModal() {
   document.getElementById('edit-modal').classList.remove('open');
   editUserId = null;
 }
-
 async function saveEditUser() {
-  const email = document.getElementById('edit-email').value.trim().toLowerCase();
-  const pass  = document.getElementById('edit-pass').value.trim();
-  const errEl = document.getElementById('edit-error');
-  const btn   = document.getElementById('edit-save-btn');
+  var email  = document.getElementById('edit-email').value.trim().toLowerCase();
+  var pass   = document.getElementById('edit-pass').value.trim();
+  var errEl  = document.getElementById('edit-error');
+  var btn    = document.getElementById('edit-save-btn');
   errEl.className = 'form-error';
   if (!email) {
     errEl.textContent = 'Email cannot be empty.';
     errEl.className   = 'form-error show';
     return;
   }
-  const orig    = btn.textContent;
+  var orig = btn.textContent;
   btn.innerHTML = '<div class="spinner"></div>';
   btn.disabled  = true;
   try {
-    const body = { email };
+    var body = { email: email };
     if (pass) body.password = pass;
-    await adminFetch(`/admin/users/${editUserId}`, 'PUT', body);
+    await adminFetch('/admin/users/' + editUserId, 'PUT', body);
     closeEditModal();
-    toast('User updated successfully');
+    showToast('User updated successfully', 'ok');
     await loadUsers();
-  } catch (err) {
+  } catch(err) {
     errEl.textContent = err.message;
     errEl.className   = 'form-error show';
   } finally {
@@ -693,28 +710,26 @@ async function saveEditUser() {
 function openDeleteModal(userId, email) {
   deleteUserId = userId;
   document.getElementById('delete-modal-sub').textContent =
-    `Permanently delete "${email}" and all their holdings, watchlist and trades? This cannot be undone.`;
+    'Permanently delete "' + email + '" and all their holdings, watchlist and trades? This cannot be undone.';
   document.getElementById('delete-modal').classList.add('open');
 }
-
 function closeDeleteModal() {
   document.getElementById('delete-modal').classList.remove('open');
   deleteUserId = null;
 }
-
 async function confirmDelete() {
-  const btn  = document.getElementById('delete-confirm-btn');
-  const orig = btn.textContent;
+  var btn  = document.getElementById('delete-confirm-btn');
+  var orig = btn.textContent;
   btn.innerHTML = '<div class="spinner"></div>';
   btn.disabled  = true;
   try {
-    await adminFetch(`/admin/users/${deleteUserId}`, 'DELETE');
+    await adminFetch('/admin/users/' + deleteUserId, 'DELETE');
     closeDeleteModal();
-    toast('User deleted');
+    showToast('User deleted', 'ok');
     await loadUsers();
-  } catch (err) {
+  } catch(err) {
     closeDeleteModal();
-    toast(err.message, 'err');
+    showToast(err.message, 'err');
   } finally {
     btn.textContent = orig;
     btn.disabled    = false;
@@ -722,23 +737,23 @@ async function confirmDelete() {
 }
 
 // ── modal close on backdrop + Escape ─────────────────────────────────────────
-document.querySelectorAll('.modal-overlay').forEach(m =>
-  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
-
-document.addEventListener('keydown', e => {
+document.querySelectorAll('.modal-overlay').forEach(function(m) {
+  m.addEventListener('click', function(e){ if (e.target === m) m.classList.remove('open'); });
+});
+document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape')
-    document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+    document.querySelectorAll('.modal-overlay.open').forEach(function(m){ m.classList.remove('open'); });
 });
 
-// ── session restore on page load ──────────────────────────────────────────────
-window.addEventListener('load', async () => {
-  const saved = sessionStorage.getItem('apex_admin_token');
+// ── session restore ───────────────────────────────────────────────────────────
+window.addEventListener('load', async function() {
+  var saved = sessionStorage.getItem('apex_admin_token');
   if (!saved) { showLogin(); return; }
   ADMIN_TOKEN = saved;
   try {
     await adminFetch('/admin/me');
     showShell();
-  } catch {
+  } catch(e) {
     ADMIN_TOKEN = null;
     sessionStorage.removeItem('apex_admin_token');
     showLogin();

@@ -2,9 +2,8 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/(.*)",    "destination": "/api/index.py" },
-    { "source": "/admin",       "destination": "/admin.html"   },
-    { "source": "/admin/",      "destination": "/admin.html"   },
-    { "source": "/static/(.*)", "destination": "/static/$1"    },
-    { "source": "/(.*)",        "destination": "/index.html"   }
+    { "source": "/admin",       "destination": "/api/index.py" },
+    { "source": "/static/(.*)", "destination": "/static/$1"   },
+    { "source": "/(.*)",        "destination": "/index.html"  }
   ]
 }

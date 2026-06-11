@@ -26,12 +26,7 @@ def kv_get(key, default=None):
             return default
         if isinstance(raw, (dict, list)):
             return raw
-        if isinstance(raw, (int, float, bool)):
-            return raw
-        s = str(raw).strip()
-        if not s or s == 'null':
-            return default
-        return json.loads(s)
+        return json.loads(raw)
     except Exception:
         return default
 
@@ -377,7 +372,10 @@ def require_admin(req):
 def admin_login():
     data = request.get_json(silent=True) or {}
     if data.get('uid') == ADMIN_UID and data.get('password') == ADMIN_PASS:
-        return jsonify({'token': ADMIN_TOKEN, 'message': 'Admin login successful'})
+        # Tell the frontend whether the users_index needs rebuilding
+        index_size = len(kv_get(users_index_key(), []))
+        return jsonify({'token': ADMIN_TOKEN, 'message': 'Admin login successful',
+                        'index_size': index_size})
     return jsonify({'error': 'Invalid admin credentials'}), 401
 
 @app.route('/api/admin/users', methods=['GET'])
@@ -385,23 +383,19 @@ def admin_list_users():
     if not require_admin(request):
         return jsonify({'error': 'Unauthorized'}), 401
     emails = kv_get(users_index_key(), [])
-    if not isinstance(emails, list):
-        emails = []
     users  = []
     for email in emails:
-        if not email:
-            continue
         u = kv_get(user_key(email))
-        if u and isinstance(u, dict):
+        if u:
             users.append({
-                'id':      u.get('id', ''),
-                'email':   u.get('email', email),
-                'name':    u.get('name', ''),
-                'created': u.get('created', ''),
+                'id':         u.get('id', ''),
+                'email':      u.get('email', email),
+                'created':    u.get('created', ''),
+                'has_password': bool(u.get('password')),
             })
     q = (request.args.get('q') or '').lower().strip()
     if q:
-        users = [u for u in users if q in u['email'].lower() or q in u['name'].lower()]
+        users = [u for u in users if q in u['email'].lower()]
     return jsonify(users)
 
 @app.route('/api/admin/users', methods=['POST'])
