@@ -26,7 +26,12 @@ def kv_get(key, default=None):
             return default
         if isinstance(raw, (dict, list)):
             return raw
-        return json.loads(raw)
+        if isinstance(raw, (int, float, bool)):
+            return raw
+        s = str(raw).strip()
+        if not s or s == 'null':
+            return default
+        return json.loads(s)
     except Exception:
         return default
 
@@ -34,6 +39,15 @@ def kv_set(key, value):
     try:
         kv = get_kv()
         kv.set(key, json.dumps(value, default=str))
+        return True
+    except Exception:
+        return False
+
+def kv_delete(key):
+    """Properly remove a key from KV (kv_set with None stores the string 'null')."""
+    try:
+        kv = get_kv()
+        kv.delete(key)
         return True
     except Exception:
         return False
@@ -371,19 +385,23 @@ def admin_list_users():
     if not require_admin(request):
         return jsonify({'error': 'Unauthorized'}), 401
     emails = kv_get(users_index_key(), [])
+    if not isinstance(emails, list):
+        emails = []
     users  = []
     for email in emails:
+        if not email:
+            continue
         u = kv_get(user_key(email))
-        if u:
+        if u and isinstance(u, dict):
             users.append({
-                'id':       u.get('id',''),
-                'email':    u.get('email', email),
-                'created':  u.get('created',''),
-                # never expose password hash to admin UI
+                'id':      u.get('id', ''),
+                'email':   u.get('email', email),
+                'name':    u.get('name', ''),
+                'created': u.get('created', ''),
             })
     q = (request.args.get('q') or '').lower().strip()
     if q:
-        users = [u for u in users if q in u['email'].lower()]
+        users = [u for u in users if q in u['email'].lower() or q in u['name'].lower()]
     return jsonify(users)
 
 @app.route('/api/admin/users', methods=['POST'])
@@ -436,7 +454,7 @@ def admin_edit_user(user_id):
             return jsonify({'error': 'New email already in use'}), 409
         user['email'] = new_email
         kv_set(user_key(new_email), user)
-        kv_set(user_key(target_email), None)   # clear old key
+        kv_delete(user_key(target_email))   # properly remove old key
         index = kv_get(users_index_key(), [])
         index = [e for e in index if e != target_email]
         if new_email not in index:
@@ -459,10 +477,11 @@ def admin_delete_user(user_id):
     if not target_email:
         return jsonify({'error': 'User not found'}), 404
     # Delete user data
-    kv_set(user_key(target_email), None)
-    kv_set(holdings_key(user_id),  None)
-    kv_set(watchlist_key(user_id), None)
-    kv_set(trades_key(user_id),    None)
+    # Properly delete all data — kv_set(key, None) stores "null", kv_delete removes the key
+    kv_delete(user_key(target_email))
+    kv_delete(holdings_key(user_id))
+    kv_delete(watchlist_key(user_id))
+    kv_delete(trades_key(user_id))
     index = [e for e in emails if e != target_email]
     kv_set(users_index_key(), index)
     return jsonify({'message': 'User deleted'})
@@ -473,6 +492,39 @@ def admin_stats():
         return jsonify({'error': 'Unauthorized'}), 401
     emails = kv_get(users_index_key(), [])
     return jsonify({'total_users': len(emails)})
+
+@app.route('/api/admin/me', methods=['GET'])
+def admin_me():
+    """Token verification endpoint — frontend calls this to confirm session is valid."""
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    return jsonify({'ok': True})
+
+@app.route('/api/admin/rebuild-index', methods=['POST'])
+def admin_rebuild_index():
+    """
+    Scan all known user keys and rebuild users_index.
+    Called once after deploy so existing users (created before the index existed) appear in the list.
+    Requires admin token.
+    """
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    # The only way to find all users without a full KV scan is to carry the
+    # current index and merge in any user that can be found via the index.
+    # For accounts created BEFORE the index existed, the admin can supply a
+    # list of known emails via the request body to seed them in.
+    data   = request.get_json(silent=True) or {}
+    extras = [str(e).lower().strip() for e in data.get('emails', []) if e]
+    index  = kv_get(users_index_key(), [])
+    added  = 0
+    for email in extras:
+        if email and email not in index:
+            u = kv_get(user_key(email))
+            if u:
+                index.append(email)
+                added += 1
+    kv_set(users_index_key(), index)
+    return jsonify({'message': f'Index rebuilt. {len(index)} total users, {added} newly added.', 'total': len(index)})
 
 # ── market data ────────────────────────────────────────────────────────────────
 @app.route('/api/quote/<symbol>', methods=['GET'])

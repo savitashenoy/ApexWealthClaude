@@ -86,6 +86,7 @@
 
   /* ── MAIN ADMIN SHELL ── */
   #admin-shell { display: none; min-height: 100vh; flex-direction: column; }
+  #admin-shell.visible { display: flex; }
 
   .admin-topbar {
     background: var(--surface); border-bottom: 1px solid var(--border);
@@ -338,6 +339,9 @@
           <button class="btn btn-ghost" onclick="loadUsers()" style="font-size:12px;padding:9px 14px">
             ↻ Refresh
           </button>
+          <button class="btn btn-ghost" onclick="rebuildIndex()" id="rebuild-btn" style="font-size:12px;padding:9px 14px;border-color:var(--orange);color:var(--orange)" title="Rebuild user index — run this once if existing users are not showing up">
+            ⚙ Rebuild Index
+          </button>
           <div class="user-count" id="user-count">— users</div>
         </div>
 
@@ -348,12 +352,13 @@
                 <th style="width:44px">#</th>
                 <th>ID</th>
                 <th>Email / Username</th>
+                <th>Name</th>
                 <th>Member Since</th>
                 <th style="width:120px">Actions</th>
               </tr>
             </thead>
             <tbody id="users-tbody">
-              <tr class="empty-row"><td colspan="5">Loading users…</td></tr>
+              <tr class="empty-row"><td colspan="6">Loading users…</td></tr>
             </tbody>
           </table>
         </div>
@@ -405,9 +410,9 @@
 
 <script>
 const API = '/api';
-let ADMIN_TOKEN = null;
-let allUsers    = [];
-let editUserId  = null;
+let ADMIN_TOKEN  = null;
+let allUsers     = [];
+let editUserId   = null;
 let deleteUserId = null;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -419,6 +424,22 @@ function toast(msg, type = 'ok') {
   el._t = setTimeout(() => { el.className = ''; }, 3200);
 }
 
+function escH(s) {
+  return String(s ?? '').replace(/[&<>'"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+}
+
+function fmtDate(str) {
+  if (!str) return '—';
+  try {
+    const d   = new Date(str);
+    const pad = n => String(n).padStart(2,'0');
+    return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} `
+         + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch { return String(str).slice(0,16); }
+}
+
+// Core fetch wrapper — always checks Content-Type before calling .json()
 async function adminFetch(path, method = 'GET', body = null) {
   const opts = {
     method,
@@ -427,58 +448,83 @@ async function adminFetch(path, method = 'GET', body = null) {
       'Authorization': `Bearer ${ADMIN_TOKEN}`
     }
   };
-  if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(`${API}${path}`, opts);
+  if (body !== null) opts.body = JSON.stringify(body);
+  let r;
+  try {
+    r = await fetch(`${API}${path}`, opts);
+  } catch (netErr) {
+    throw new Error('Network error — check connection or Vercel deployment.');
+  }
   const ct = r.headers.get('content-type') || '';
-  if (!ct.includes('json')) throw new Error(`Server returned non-JSON (${r.status})`);
+  if (!ct.includes('application/json')) {
+    throw new Error(`API unreachable (HTTP ${r.status}). Check Vercel KV env vars and redeploy.`);
+  }
   const d = await r.json();
   if (!r.ok) throw new Error(d.error || `Request failed (${r.status})`);
   return d;
 }
 
-// ── login / logout ────────────────────────────────────────────────────────────
+// ── show / hide screens ───────────────────────────────────────────────────────
+function showLogin() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('admin-shell').classList.remove('visible');
+}
+
+function showShell() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('admin-shell').classList.add('visible');
+  loadStats();
+  loadUsers();
+}
+
+// ── login ─────────────────────────────────────────────────────────────────────
 async function doAdminLogin(e) {
   e.preventDefault();
-  const uid  = document.getElementById('admin-uid').value.trim();
-  const pass = document.getElementById('admin-pass').value;
+  const uid   = document.getElementById('admin-uid').value.trim();
+  const pass  = document.getElementById('admin-pass').value;
   const errEl = document.getElementById('login-error');
   const btn   = document.getElementById('login-btn');
+
   errEl.className = 'login-error';
-  btn.innerHTML = '<div class="spinner" style="margin:0 auto;border-top-color:#fff"></div>';
+  btn.disabled    = true;
+  btn.innerHTML   = '<div class="spinner" style="margin:0 auto;border-top-color:#fff"></div>';
+
   try {
-    const d = await (await fetch(`${API}/admin/login`, {
-      method: 'POST',
+    const r = await fetch(`${API}/admin/login`, {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uid, password: pass })
-    })).json();
-    if (!d.token) throw new Error(d.error || 'Login failed');
+      body:    JSON.stringify({ uid, password: pass })
+    });
+    const ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      throw new Error(
+        `API not responding (HTTP ${r.status}). ` +
+        'Ensure Vercel KV env vars are set and the project is redeployed.'
+      );
+    }
+    const d = await r.json();
+    if (!r.ok || !d.token) throw new Error(d.error || 'Login failed');
     ADMIN_TOKEN = d.token;
     sessionStorage.setItem('apex_admin_token', ADMIN_TOKEN);
-    enterAdmin();
-  } catch(err) {
+    showShell();
+  } catch (err) {
     errEl.textContent = err.message;
     errEl.className   = 'login-error show';
-    btn.textContent   = 'Sign in to Admin';
+  } finally {
+    btn.disabled  = false;
+    btn.innerHTML = 'Sign in to Admin';
   }
 }
 
+// ── logout ────────────────────────────────────────────────────────────────────
 function doAdminLogout() {
   sessionStorage.removeItem('apex_admin_token');
   ADMIN_TOKEN = null;
   allUsers    = [];
-  document.getElementById('admin-shell').style.display = 'none';
-  document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('admin-uid').value  = '';
   document.getElementById('admin-pass').value = '';
   document.getElementById('login-error').className = 'login-error';
-}
-
-function enterAdmin() {
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('admin-shell').style.display  = 'flex';
-  document.getElementById('admin-shell').style.flexDirection = 'column';
-  loadStats();
-  loadUsers();
+  showLogin();
 }
 
 // ── tabs ──────────────────────────────────────────────────────────────────────
@@ -493,40 +539,56 @@ function switchTab(name) {
 async function loadStats() {
   try {
     const d = await adminFetch('/admin/stats');
-    document.getElementById('stat-total').textContent = d.total_users;
-  } catch {}
+    document.getElementById('stat-total').textContent = d.total_users ?? '—';
+  } catch { /* non-critical */ }
 }
 
 // ── user list ─────────────────────────────────────────────────────────────────
 async function loadUsers() {
   const tbody = document.getElementById('users-tbody');
-  tbody.innerHTML = '<tr class="empty-row"><td colspan="5">Loading…</td></tr>';
+  tbody.innerHTML = '<tr class="empty-row"><td colspan="6">Loading...</td></tr>';
   try {
     allUsers = await adminFetch('/admin/users');
     renderUsers(allUsers);
-    loadStats();
-  } catch(err) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="5" style="color:var(--accent2)">Error: ${err.message}</td></tr>`;
+    document.getElementById('stat-total').textContent = allUsers.length;
+  } catch (err) {
+    tbody.innerHTML = `
+      <tr class="empty-row">
+        <td colspan="6" style="color:var(--accent2)">
+          &#x2717; ${escH(err.message)}<br>
+          <small style="color:var(--dim);line-height:2">
+            If KV is connected, try clicking <b>Refresh</b>. If users registered before the index was set up, click <b>⚙ Rebuild Index</b>.
+          </small>
+        </td>
+      </tr>`;
   }
 }
 
 function renderUsers(users) {
   const tbody = document.getElementById('users-tbody');
-  document.getElementById('user-count').textContent = `${users.length} user${users.length !== 1 ? 's' : ''}`;
+  document.getElementById('user-count').textContent =
+    `${users.length} user${users.length !== 1 ? 's' : ''}`;
   if (!users.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No users found.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No users found.</td></tr>';
     return;
   }
   tbody.innerHTML = users.map((u, i) => `
     <tr>
       <td class="td-mono td-dim">${i + 1}</td>
-      <td class="td-mono td-dim" style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escH(u.id)}">${escH(u.id.slice(0,12))}…</td>
+      <td class="td-mono td-dim"
+          style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${escH(u.id)}">${u.id ? escH(u.id.slice(0,8)) + '…' : '—'}</td>
       <td style="font-weight:500">${escH(u.email)}</td>
+      <td class="td-dim" style="font-size:12px">${escH(u.name || '—')}</td>
       <td class="td-mono td-dim">${fmtDate(u.created)}</td>
       <td>
         <div class="td-actions">
-          <button class="btn btn-edit btn-sm" onclick="openEditModal('${escH(u.id)}','${escH(u.email)}')" title="Edit user">✏ Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="openDeleteModal('${escH(u.id)}','${escH(u.email)}')" title="Delete user">🗑</button>
+          <button class="btn btn-edit btn-sm"
+            onclick="openEditModal('${escH(u.id)}','${escH(u.email)}')"
+            title="Edit">&#x270F; Edit</button>
+          <button class="btn btn-danger btn-sm"
+            onclick="openDeleteModal('${escH(u.id)}','${escH(u.email)}')"
+            title="Delete">&#x1F5D1;</button>
         </div>
       </td>
     </tr>`).join('');
@@ -534,21 +596,25 @@ function renderUsers(users) {
 
 function filterUsers() {
   const q = document.getElementById('user-search').value.toLowerCase().trim();
-  renderUsers(q ? allUsers.filter(u => u.email.toLowerCase().includes(q)) : allUsers);
+  renderUsers(q ? allUsers.filter(u => u.email.toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q)) : allUsers);
 }
 
-function fmtDate(str) {
-  if (!str) return '—';
+// ── rebuild index ─────────────────────────────────────────────────────────────
+async function rebuildIndex() {
+  const btn = document.getElementById('rebuild-btn');
+  const orig = btn.innerHTML;
+  btn.disabled  = true;
+  btn.innerHTML = '<div class="spinner" style="margin:0 auto;width:14px;height:14px;border-width:2px"></div>';
   try {
-    const d = new Date(str);
-    return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })
-         + ' ' + d.toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit', hour12: false });
-  } catch { return str.slice(0, 16); }
-}
-
-function escH(s) {
-  return String(s ?? '').replace(/[&<>'"]/g, c =>
-    ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c]));
+    const d = await adminFetch('/admin/rebuild-index', 'POST', {});
+    toast(`Index rebuilt — ${d.total ?? '?'} users found`);
+    await loadUsers();
+  } catch (err) {
+    toast(err.message, 'err');
+  } finally {
+    btn.innerHTML = orig;
+    btn.disabled  = false;
+  }
 }
 
 // ── create user ───────────────────────────────────────────────────────────────
@@ -557,23 +623,28 @@ async function createUser() {
   const pass  = document.getElementById('new-pass').value;
   const errEl = document.getElementById('create-error');
   const okEl  = document.getElementById('create-success');
-  errEl.className = 'form-error'; okEl.className = 'form-success';
-  if (!email || !pass) { errEl.textContent = 'Both email and password are required.'; errEl.className = 'form-error show'; return; }
+  errEl.className = 'form-error';
+  okEl.className  = 'form-success';
+  if (!email || !pass) {
+    errEl.textContent = 'Both email and password are required.';
+    errEl.className   = 'form-error show';
+    return;
+  }
   try {
-    const d = await adminFetch('/admin/users', 'POST', { email, password: pass });
-    okEl.textContent = `✓ Account created for ${email}`;
+    await adminFetch('/admin/users', 'POST', { email, password: pass });
+    okEl.textContent = `Account created for ${email}`;
     okEl.className   = 'form-success show';
     document.getElementById('new-email').value = '';
     document.getElementById('new-pass').value  = '';
     setTimeout(() => { okEl.className = 'form-success'; }, 3500);
     await loadUsers();
-  } catch(err) {
+  } catch (err) {
     errEl.textContent = err.message;
     errEl.className   = 'form-error show';
   }
 }
 
-// ── edit user modal ───────────────────────────────────────────────────────────
+// ── edit modal ────────────────────────────────────────────────────────────────
 function openEditModal(userId, email) {
   editUserId = userId;
   document.getElementById('edit-email').value = email;
@@ -594,8 +665,12 @@ async function saveEditUser() {
   const errEl = document.getElementById('edit-error');
   const btn   = document.getElementById('edit-save-btn');
   errEl.className = 'form-error';
-  if (!email) { errEl.textContent = 'Email cannot be empty.'; errEl.className = 'form-error show'; return; }
-  const orig = btn.textContent;
+  if (!email) {
+    errEl.textContent = 'Email cannot be empty.';
+    errEl.className   = 'form-error show';
+    return;
+  }
+  const orig    = btn.textContent;
   btn.innerHTML = '<div class="spinner"></div>';
   btn.disabled  = true;
   try {
@@ -605,7 +680,7 @@ async function saveEditUser() {
     closeEditModal();
     toast('User updated successfully');
     await loadUsers();
-  } catch(err) {
+  } catch (err) {
     errEl.textContent = err.message;
     errEl.className   = 'form-error show';
   } finally {
@@ -614,11 +689,11 @@ async function saveEditUser() {
   }
 }
 
-// ── delete user modal ─────────────────────────────────────────────────────────
+// ── delete modal ──────────────────────────────────────────────────────────────
 function openDeleteModal(userId, email) {
   deleteUserId = userId;
   document.getElementById('delete-modal-sub').textContent =
-    `This will permanently delete "${email}" and all their data (holdings, watchlist, trades). This cannot be undone.`;
+    `Permanently delete "${email}" and all their holdings, watchlist and trades? This cannot be undone.`;
   document.getElementById('delete-modal').classList.add('open');
 }
 
@@ -637,7 +712,7 @@ async function confirmDelete() {
     closeDeleteModal();
     toast('User deleted');
     await loadUsers();
-  } catch(err) {
+  } catch (err) {
     closeDeleteModal();
     toast(err.message, 'err');
   } finally {
@@ -646,18 +721,29 @@ async function confirmDelete() {
   }
 }
 
-// ── modal close on overlay click ──────────────────────────────────────────────
+// ── modal close on backdrop + Escape ─────────────────────────────────────────
 document.querySelectorAll('.modal-overlay').forEach(m =>
   m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); }));
 
-// ── session restore ───────────────────────────────────────────────────────────
-window.onload = () => {
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape')
+    document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+});
+
+// ── session restore on page load ──────────────────────────────────────────────
+window.addEventListener('load', async () => {
   const saved = sessionStorage.getItem('apex_admin_token');
-  if (saved) {
-    ADMIN_TOKEN = saved;
-    enterAdmin();
+  if (!saved) { showLogin(); return; }
+  ADMIN_TOKEN = saved;
+  try {
+    await adminFetch('/admin/me');
+    showShell();
+  } catch {
+    ADMIN_TOKEN = null;
+    sessionStorage.removeItem('apex_admin_token');
+    showLogin();
   }
-};
+});
 </script>
 </body>
 </html>
