@@ -312,45 +312,125 @@ def sell_holding(user_id, holding_id):
     kv_set(holdings_key(user_id), updated)
     return jsonify({'message':'Sold','trade':trade,'remaining_qty':max(0,round(avail-sell_qty,6))})
 
-# ── watchlist ──────────────────────────────────────────────────────────────────
+# ── watchlist (grouped, per-user) ────────────────────────────────────────────
+DEFAULT_WL_GROUP = 'Default'
+
+def _load_watchlist_data(user_id):
+    """
+    Returns {'groups': {name: [items]}, 'order': [name, ...]}.
+    Migrates legacy flat-list format (pre-groups) into {'Default': [...]}.
+    Always guarantees a 'Default' group exists.
+    """
+    raw = kv_get(watchlist_key(user_id), None)
+    if raw is None:
+        return {'groups': {DEFAULT_WL_GROUP: []}, 'order': [DEFAULT_WL_GROUP]}
+    if isinstance(raw, list):
+        # Legacy format — migrate to grouped structure
+        data = {'groups': {DEFAULT_WL_GROUP: raw}, 'order': [DEFAULT_WL_GROUP]}
+        kv_set(watchlist_key(user_id), data)
+        return data
+    if not isinstance(raw, dict):
+        return {'groups': {DEFAULT_WL_GROUP: []}, 'order': [DEFAULT_WL_GROUP]}
+    groups = raw.get('groups') or {}
+    if DEFAULT_WL_GROUP not in groups:
+        groups[DEFAULT_WL_GROUP] = []
+    order = raw.get('order') or []
+    # Ensure order contains every group, Default first
+    for g in groups:
+        if g not in order:
+            order.append(g)
+    order = [g for g in order if g in groups]
+    if DEFAULT_WL_GROUP in order:
+        order = [DEFAULT_WL_GROUP] + [g for g in order if g != DEFAULT_WL_GROUP]
+    else:
+        order = [DEFAULT_WL_GROUP] + order
+    return {'groups': groups, 'order': order}
+
+@app.route('/api/watchlist/<user_id>/groups', methods=['GET'])
+def get_watchlist_groups(user_id):
+    data = _load_watchlist_data(user_id)
+    counts = {g: len(data['groups'].get(g, [])) for g in data['order']}
+    return jsonify({'groups': data['order'], 'counts': counts})
+
+@app.route('/api/watchlist/<user_id>/groups', methods=['POST'])
+def create_watchlist_group(user_id):
+    body = request.get_json(silent=True) or {}
+    name = str(body.get('name', '')).strip()
+    if not name:
+        return jsonify({'error': 'Group name is required'}), 400
+    if len(name) > 40:
+        return jsonify({'error': 'Group name must be 40 characters or fewer'}), 400
+    data = _load_watchlist_data(user_id)
+    if name in data['groups']:
+        return jsonify({'error': 'A group with this name already exists'}), 409
+    data['groups'][name] = []
+    data['order'].append(name)
+    kv_set(watchlist_key(user_id), data)
+    return jsonify({'message': 'Group created', 'groups': data['order']})
+
+@app.route('/api/watchlist/<user_id>/groups/<name>', methods=['DELETE'])
+def delete_watchlist_group(user_id, name):
+    if name == DEFAULT_WL_GROUP:
+        return jsonify({'error': 'The Default group cannot be deleted'}), 400
+    data = _load_watchlist_data(user_id)
+    if name not in data['groups']:
+        return jsonify({'error': 'Group not found'}), 404
+    del data['groups'][name]
+    data['order'] = [g for g in data['order'] if g != name]
+    kv_set(watchlist_key(user_id), data)
+    return jsonify({'message': 'Group deleted', 'groups': data['order']})
+
 @app.route('/api/watchlist/<user_id>', methods=['GET'])
 def get_watchlist(user_id):
-    return jsonify(kv_get(watchlist_key(user_id), []))
+    group = request.args.get('group', DEFAULT_WL_GROUP)
+    data  = _load_watchlist_data(user_id)
+    return jsonify(data['groups'].get(group, []))
 
 @app.route('/api/watchlist/<user_id>', methods=['POST'])
 def add_watchlist(user_id):
-    data = request.get_json(silent=True) or {}
-    wl   = kv_get(watchlist_key(user_id), [])
-    sym  = str(data.get('symbol','')).upper()
-    if any(w['symbol']==sym for w in wl):
-        return jsonify({'error':'Already in watchlist'}), 409
-    wl.append({'symbol':sym,'name':data.get('name',sym),
-               'industry':data.get('industry',data.get('sector','')),'added':str(date.today())})
-    kv_set(watchlist_key(user_id), wl)
-    return jsonify({'message':'Added to watchlist'})
+    group = request.args.get('group', DEFAULT_WL_GROUP)
+    item  = request.get_json(silent=True) or {}
+    data  = _load_watchlist_data(user_id)
+    if group not in data['groups']:
+        data['groups'][group] = []
+        data['order'].append(group)
+    wl  = data['groups'][group]
+    sym = str(item.get('symbol', '')).upper()
+    if any(w['symbol'] == sym for w in wl):
+        return jsonify({'error': 'Already in watchlist'}), 409
+    wl.append({'symbol': sym, 'name': item.get('name', sym), 'added': str(date.today())})
+    kv_set(watchlist_key(user_id), data)
+    return jsonify({'message': 'Added to watchlist'})
 
 @app.route('/api/watchlist/<user_id>/bulk', methods=['POST'])
 def bulk_add_watchlist(user_id):
-    """Bulk-import watchlist items (from CSV/XLSX import)."""
+    """Bulk-import watchlist items into a group (from CSV/XLSX import)."""
+    group = request.args.get('group', DEFAULT_WL_GROUP)
     items = request.get_json(silent=True) or []
-    wl    = kv_get(watchlist_key(user_id), [])
+    data  = _load_watchlist_data(user_id)
+    if group not in data['groups']:
+        data['groups'][group] = []
+        data['order'].append(group)
+    wl       = data['groups'][group]
     existing = {w['symbol'] for w in wl}
     added, skipped = 0, 0
-    for item in items:
-        sym = str(item.get('symbol','')).upper().strip()
+    for it in items:
+        sym = str(it.get('symbol', '')).upper().strip()
         if not sym or sym in existing:
             skipped += 1; continue
-        wl.append({'symbol':sym,'name':item.get('name',sym),
-                   'industry':item.get('industry',''),'added':str(date.today())})
+        wl.append({'symbol': sym, 'name': it.get('name', sym), 'added': str(date.today())})
         existing.add(sym); added += 1
-    kv_set(watchlist_key(user_id), wl)
-    return jsonify({'message':f'Imported {added} tickers','added':added,'skipped':skipped})
+    kv_set(watchlist_key(user_id), data)
+    return jsonify({'message': f'Imported {added} tickers', 'added': added, 'skipped': skipped})
 
 @app.route('/api/watchlist/<user_id>/<symbol>', methods=['DELETE'])
 def remove_watchlist(user_id, symbol):
-    wl = [w for w in kv_get(watchlist_key(user_id),[]) if w['symbol'] != symbol.upper()]
-    kv_set(watchlist_key(user_id), wl)
-    return jsonify({'message':'Removed'})
+    group = request.args.get('group', DEFAULT_WL_GROUP)
+    data  = _load_watchlist_data(user_id)
+    wl    = data['groups'].get(group, [])
+    data['groups'][group] = [w for w in wl if w['symbol'] != symbol.upper()]
+    kv_set(watchlist_key(user_id), data)
+    return jsonify({'message': 'Removed'})
 
 # ── trades ─────────────────────────────────────────────────────────────────────
 @app.route('/api/trades/<user_id>', methods=['GET'])
