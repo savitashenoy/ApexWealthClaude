@@ -1059,6 +1059,14 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
           <div class="chart-title allocation-title-chip">Portfolio Allocation by Percentage</div>
           <div class="chart-container allocation-donut-container"><canvas id="dash-allocation-chart"></canvas></div>
         </div>
+        <div class="chart-card">
+          <div class="chart-title">By Industry</div>
+          <div class="chart-container"><canvas id="dash-industry-chart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">P&L by Stock (₹)</div>
+          <div class="chart-container"><canvas id="dash-pnl-chart"></canvas></div>
+        </div>
       </div>
     </div>
 
@@ -1081,7 +1089,6 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
 
       <div class="tabs-bar">
         <button class="tab-btn active" onclick="switchPortTab('holdings')">Holdings</button>
-        <button class="tab-btn" onclick="switchPortTab('allocation')">Asset Allocation</button>
         <button class="tab-btn" onclick="switchPortTab('performance')">Performance Report</button>
       </div>
 
@@ -1131,28 +1138,6 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
               <tr><td colspan="11"><div class="loading-overlay"><div class="spinner"></div> Loading…</div></td></tr>
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <!-- ASSET ALLOCATION TAB -->
-      <div class="tab-content" id="tab-allocation">
-        <div class="charts-grid">
-          <div class="chart-card">
-            <div class="chart-title">By Industry</div>
-            <div class="chart-container"><canvas id="alloc-industry-chart"></canvas></div>
-          </div>
-          <div class="chart-card">
-            <div class="chart-title">By Stock (Current Value)</div>
-            <div class="chart-container"><canvas id="alloc-stock-chart"></canvas></div>
-          </div>
-          <div class="chart-card">
-            <div class="chart-title">Invested vs Current Value by Stock</div>
-            <div class="chart-container"><canvas id="alloc-bar-chart"></canvas></div>
-          </div>
-          <div class="chart-card">
-            <div class="chart-title">P&L by Stock (₹)</div>
-            <div class="chart-container"><canvas id="alloc-pnl-chart"></canvas></div>
-          </div>
         </div>
       </div>
 
@@ -1482,8 +1467,7 @@ let holdingsCache = { data: null, ts: 0, uid: null };
 const HOLDINGS_TTL = 60000; // 60 seconds
 let analysisTicker = null;
 let analysisPeriod = '1mo';
-let dashBarChart, dashAllocationChart;
-let allocIndustryChart, allocStockChart, allocBarChart, allocPnlChart;
+let dashBarChart, dashAllocationChart, dashIndustryChart, dashPnlChart;
 let analysisPriceChart, analysisVolChart, analysisRetChart, scoreRadarChart, scoreContribChart;
 let marketIndexChart, marketIndicesData = [], selectedMarketIndex = 'nifty50', selectedMarketPeriod = '1d';
 let activeAnalysisTab = 'technicals';
@@ -1516,7 +1500,6 @@ function refreshVisibleCharts() {
   const activePage = document.querySelector('.page.active')?.id?.replace('page-', '');
   if (activePage === 'dashboard' && holdingsData.length) renderDashCharts(holdingsData);
   if (activePage === 'portfolio') {
-    if (document.getElementById('tab-allocation')?.classList.contains('active')) renderAllocationCharts();
     if (document.getElementById('tab-performance')?.classList.contains('active')) loadTrades();
   }
   if (activePage === 'analysis' && analysisTicker) {
@@ -1808,6 +1791,14 @@ async function loadDashboard() {
         <div class="chart-card allocation-donut-card">
           <div class="chart-title allocation-title-chip">Portfolio Allocation by Percentage</div>
           <div class="chart-container allocation-donut-container"><canvas id="dash-allocation-chart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">By Industry</div>
+          <div class="chart-container"><canvas id="dash-industry-chart"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">P&L by Stock (₹)</div>
+          <div class="chart-container"><canvas id="dash-pnl-chart"></canvas></div>
         </div>`;
     }
     renderDashCharts(holdings);
@@ -1815,6 +1806,8 @@ async function loadDashboard() {
     // Destroy any existing charts before replacing canvas elements
     if (dashBarChart)        { dashBarChart.destroy();        dashBarChart = null; }
     if (dashAllocationChart) { dashAllocationChart.destroy(); dashAllocationChart = null; }
+    if (dashIndustryChart)   { dashIndustryChart.destroy();   dashIndustryChart = null; }
+    if (dashPnlChart)        { dashPnlChart.destroy();        dashPnlChart = null; }
     chartsGrid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;padding:60px 20px;background:var(--card);border:1px solid var(--border);border-radius:12px"><i class="fa fa-chart-pie"></i><p style="margin-bottom:14px">No holdings yet — your charts will appear here once you add positions.</p><button class="btn btn-primary" onclick="showPage('portfolio')" style="margin:0 auto;display:inline-flex"><i class="fa fa-plus"></i>&nbsp; Add Your First Position</button></div>`;
   }
 }
@@ -1862,6 +1855,35 @@ function renderDashCharts(holdings) {
         }]
       },
       options: dashboardAllocationDoughnutOpts(totalInvested)
+    });
+  }
+
+  // By Industry donut
+  const sMap = {};
+  holdings.forEach(x => { const s = x.industry || x.sector || 'Unknown'; sMap[s] = (sMap[s]||0) + Number(x.curr_value || 0); });
+  const ctx3 = document.getElementById('dash-industry-chart')?.getContext('2d');
+  if (ctx3) {
+    if (dashIndustryChart) dashIndustryChart.destroy();
+    dashIndustryChart = new Chart(ctx3, {
+      type: 'doughnut',
+      data: { labels: Object.keys(sMap), datasets: [{ data: Object.values(sMap), backgroundColor: COLORS, borderColor: allocTheme.donutBorder, borderWidth: 2 }] },
+      options: doughnutOpts()
+    });
+  }
+
+  // P&L by Stock bar
+  const pnls = holdings.map(x => Number(x.pnl || 0));
+  const ctx4 = document.getElementById('dash-pnl-chart')?.getContext('2d');
+  if (ctx4) {
+    if (dashPnlChart) dashPnlChart.destroy();
+    dashPnlChart = new Chart(ctx4, {
+      type: 'bar',
+      data: { labels, datasets: [{
+        label: 'P&L (₹)', data: pnls,
+        backgroundColor: pnls.map(v => v >= 0 ? 'rgba(0,200,150,0.6)' : 'rgba(255,77,109,0.6)'),
+        borderColor: pnls.map(v => v >= 0 ? '#00c896' : '#ff4d6d'), borderWidth: 1
+      }] },
+      options: chartOpts('₹')
     });
   }
 }
@@ -2075,48 +2097,13 @@ async function confirmEdit() {
 function switchPortTab(tab) {
   document.querySelectorAll('.tabs-bar .tab-btn').forEach((b,i) => {
     b.classList.remove('active');
-    if (['holdings','allocation','performance'][i] === tab) b.classList.add('active');
+    if (['holdings','performance'][i] === tab) b.classList.add('active');
   });
   document.querySelectorAll('#page-portfolio .tab-content').forEach(t => t.classList.remove('active'));
   document.getElementById(`tab-${tab}`).classList.add('active');
-  if (tab === 'allocation') renderAllocationCharts();
   if (tab === 'performance') loadTrades();
 }
 
-function renderAllocationCharts() {
-  if (!holdingsData.length) return;
-  const h = holdingsData;
-
-  // Industry donut
-  const sMap = {};
-  h.forEach(x => { const s = x.industry || x.sector || 'Unknown'; sMap[s] = (sMap[s]||0) + x.curr_value; });
-  const ctx1 = document.getElementById('alloc-industry-chart').getContext('2d');
-  if (allocIndustryChart) allocIndustryChart.destroy();
-  allocIndustryChart = new Chart(ctx1, {type:'doughnut', data:{labels:Object.keys(sMap),datasets:[{data:Object.values(sMap),backgroundColor:COLORS,borderColor:currentThemeColors().donutBorder,borderWidth:2}]}, options:doughnutOpts()});
-
-  // Stock donut
-  const ctx2 = document.getElementById('alloc-stock-chart').getContext('2d');
-  if (allocStockChart) allocStockChart.destroy();
-  allocStockChart = new Chart(ctx2, {type:'doughnut', data:{labels:h.map(x=>x.symbol),datasets:[{data:h.map(x=>x.curr_value),backgroundColor:COLORS,borderColor:currentThemeColors().donutBorder,borderWidth:2}]}, options:doughnutOpts()});
-
-  // Bar invested vs curr
-  const ctx3 = document.getElementById('alloc-bar-chart').getContext('2d');
-  if (allocBarChart) allocBarChart.destroy();
-  allocBarChart = new Chart(ctx3, {type:'bar',data:{labels:h.map(x=>x.symbol),datasets:[
-    {label:'Invested',data:h.map(x=>x.invested),backgroundColor:'rgba(80,140,255,0.5)',borderColor:'#508cff',borderWidth:1},
-    {label:'Current Value',data:h.map(x=>x.curr_value),backgroundColor:'rgba(0,200,150,0.5)',borderColor:'#00c896',borderWidth:1}
-  ]},options:chartOpts('₹')});
-
-  // P&L bar
-  const pnls = h.map(x => x.pnl);
-  const ctx4 = document.getElementById('alloc-pnl-chart').getContext('2d');
-  if (allocPnlChart) allocPnlChart.destroy();
-  allocPnlChart = new Chart(ctx4, {type:'bar',data:{labels:h.map(x=>x.symbol),datasets:[{
-    label:'P&L (₹)', data:pnls,
-    backgroundColor:pnls.map(v => v>=0?'rgba(0,200,150,0.6)':'rgba(255,77,109,0.6)'),
-    borderColor:pnls.map(v => v>=0?'#00c896':'#ff4d6d'),borderWidth:1
-  }]},options:chartOpts('₹')});
-}
 
 async function loadTrades() {
   const trades = await apiCall(`/trades/${USER.user_id}`);
@@ -2505,9 +2492,25 @@ function fmtFinancialValue(value) {
   return escapeHtml(value);
 }
 
+// Rows to highlight per statement, keyed by normalized metric name (lowercase, no spaces/punctuation)
+const FUNDAMENTAL_HIGHLIGHT_ROWS = {
+  'Annual Income Statement': ['EBITDA','EBIT','Basic EPS','Net Income','Gross Profit','Total Revenue'],
+  'Quarterly Income Statement': ['EBITDA','EBIT','Basic EPS','Net Income','Gross Profit','Total Revenue'],
+  'Quarterly Balance Sheet': ['Total Debt','Working Capital','Cash Cash Equivalents And Short Term Investments','Current Liabilities','Current Assets','Net PPE','Inventory','Accounts Receivable'],
+  'Annual Cash Flow': ['Free Cash Flow','Capital Expenditure','Cash Dividends Paid','Investing Cash Flow','Operating Cash Flow','Net Income From Continuing Operations']
+};
+function normalizeMetricName(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+// Pre-compute normalized lookup sets for fast membership checks
+const FUNDAMENTAL_HIGHLIGHT_SETS = Object.fromEntries(
+  Object.entries(FUNDAMENTAL_HIGHLIGHT_ROWS).map(([title, names]) => [title, new Set(names.map(normalizeMetricName))])
+);
+
 function renderFundamentalTable(section) {
   const columns = section.columns || [];
   const rows = section.rows || [];
+  const highlightSet = FUNDAMENTAL_HIGHLIGHT_SETS[section.title];
   if (!columns.length || !rows.length) {
     return `
       <div class="fundamental-card">
@@ -2528,7 +2531,11 @@ function renderFundamentalTable(section) {
         <table class="fundamental-table">
           <thead><tr><th>Metric</th>${columns.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
           <tbody>
-            ${rows.map(row => `<tr><td>${escapeHtml(row.metric)}</td>${columns.map(c => `<td>${fmtFinancialValue(row.values?.[c])}</td>`).join('')}</tr>`).join('')}
+            ${rows.map(row => {
+              const isHighlighted = highlightSet && highlightSet.has(normalizeMetricName(row.metric));
+              const cellStyle = isHighlighted ? ' style="background:#E4D6C3;color:#3a2f1f"' : '';
+              return `<tr>${isHighlighted ? `<td${cellStyle}>${escapeHtml(row.metric)}</td>` : `<td>${escapeHtml(row.metric)}</td>`}${columns.map(c => `<td${cellStyle}>${fmtFinancialValue(row.values?.[c])}</td>`).join('')}</tr>`;
+            }).join('')}
           </tbody>
         </table>
       </div>
