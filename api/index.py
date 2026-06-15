@@ -1018,18 +1018,43 @@ def scr_calculate_bollinger_position(close, length=20, std=2.0):
     return 'Lower Band'
 
 def scr_fetch_history(symbol, interval, period=None, days=None):
+    """Fetch OHLCV history. Compatible with yfinance >= 0.2.50.
+    - Removed auto_adjust=False (parameter behaviour changed in newer yfinance releases).
+    - Strips non-OHLCV columns (Dividends, Stock Splits, Capital Gains).
+    - Returns tz-naive DatetimeIndex so pandas resample() works without errors.
+    """
     symbol = scr_normalize_symbol(symbol)
-    ticker = yf.Ticker(symbol)
-    if period:
-        df = ticker.history(period=period, interval=interval, auto_adjust=False)
-    else:
-        end = datetime.now()
-        start = end - timedelta(days=days or 365)
-        df = ticker.history(start=start, end=end, interval=interval, auto_adjust=False)
-    if df is None or df.empty:
+    if not symbol:
         return pd.DataFrame()
-    df = df.rename(columns={c: c.lower() for c in df.columns})
-    return df.dropna(subset=['close'])
+    try:
+        ticker = yf.Ticker(symbol)
+        if period:
+            df = ticker.history(period=period, interval=interval)
+        else:
+            end   = datetime.now()
+            start = end - timedelta(days=days or 365)
+            df    = ticker.history(start=start, end=end, interval=interval)
+
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        # Normalise column names to lowercase
+        df = df.rename(columns={c: c.lower() for c in df.columns})
+
+        # Keep only OHLCV columns — drop dividends, splits, capital gains
+        keep = [c for c in df.columns if c in ('open','high','low','close','volume')]
+        df = df[keep].dropna(subset=['close'])
+
+        if df.empty:
+            return pd.DataFrame()
+
+        # Make tz-naive so resample() works without timezone errors
+        if getattr(df.index, 'tz', None) is not None:
+            df.index = df.index.tz_localize(None)
+
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 def scr_check_ema_symbol(symbol, config):
     timeframe     = config.get('timeframe', 'Weekly')
@@ -1039,57 +1064,87 @@ def scr_check_ema_symbol(symbol, config):
     ema3 = int(config.get('ema3', 27))
 
     if timeframe == '60min':
-        interval, periods, days = '1h', lookback_days * 7, 90
+        # yfinance uses '1h' for hourly data
+        interval = '1h'
+        periods  = lookback_days * 7       # approx hourly candles
+        days     = 90
     elif timeframe == 'Daily':
-        interval, periods, days = '1d', lookback_days, 730
+        interval = '1d'
+        periods  = lookback_days
+        days     = 730
     else:
-        interval, periods, days = '1wk', max(5, int(lookback_days / 7)), 1460
+        # Weekly
+        interval = '1wk'
+        periods  = max(5, int(lookback_days / 7))
+        days     = 1460
 
-    min_needed = max(30, ema1, ema2, ema3) + 10
+    # Need at least enough bars to compute the longest EMA + RSI warmup
+    min_needed = max(ema1, ema2, ema3, 14) + 5
     df = scr_fetch_history(symbol, interval=interval, days=days)
     if df.empty or len(df) < min_needed:
         return False, 'Insufficient data'
 
+    # Work on a copy so we never modify the cached df
+    df = df.copy()
     close = df['close']
+
     df[f'ema{ema1}'] = scr_calculate_ema(close, ema1)
     df[f'ema{ema2}'] = scr_calculate_ema(close, ema2)
     df[f'ema{ema3}'] = scr_calculate_ema(close, ema3)
-    df['rsi14'] = scr_calculate_rsi(close, 14)
+    df['rsi14']      = scr_calculate_rsi(close, 14)
     df = df.dropna()
-    if len(df) < 10:
+
+    if len(df) < 5:
         return False, 'Insufficient indicator data'
 
-    recent = df.tail(periods)
+    # Use last `periods` bars as the lookback window
+    window = min(periods, len(df))
+    recent = df.tail(window)
+
+    # Condition A: during the lookback window the price was below ALL three EMAs at least once
     below_all = (
         (recent['close'] < recent[f'ema{ema1}']) &
         (recent['close'] < recent[f'ema{ema2}']) &
         (recent['close'] < recent[f'ema{ema3}'])
     )
+
+    # Condition B: the latest bar is now above ALL three EMAs (reversal confirmed)
     latest  = df.iloc[-1]
     current = float(latest['close'])
-    above_now = (
-        current > float(latest[f'ema{ema1}']) and
-        current > float(latest[f'ema{ema2}']) and
-        current > float(latest[f'ema{ema3}'])
-    )
+    e1 = float(latest[f'ema{ema1}'])
+    e2 = float(latest[f'ema{ema2}'])
+    e3 = float(latest[f'ema{ema3}'])
+
+    # Guard against zero EMAs (shouldn't happen but avoids ZeroDivisionError)
+    if e1 <= 0 or e2 <= 0 or e3 <= 0:
+        return False, 'Invalid EMA values'
+
+    above_now = current > e1 and current > e2 and current > e3
+
     if not below_all.any() or not above_now:
         return False, 'No bullish EMA reversal'
 
     return True, {
-        'symbol': scr_normalize_symbol(symbol),
+        'symbol':       symbol,
         'current_price': round(current, 2),
-        'rsi14': round(float(latest['rsi14']), 2),
-        'ema1_diff_pct': round(((current - float(latest[f'ema{ema1}'])) / float(latest[f'ema{ema1}'])) * 100, 2),
-        'ema2_diff_pct': round(((current - float(latest[f'ema{ema2}'])) / float(latest[f'ema{ema2}'])) * 100, 2),
-        'ema3_diff_pct': round(((current - float(latest[f'ema{ema3}'])) / float(latest[f'ema{ema3}'])) * 100, 2),
+        'rsi14':         round(float(latest['rsi14']), 2),
+        'ema1_diff_pct': round(((current - e1) / e1) * 100, 2),
+        'ema2_diff_pct': round(((current - e2) / e2) * 100, 2),
+        'ema3_diff_pct': round(((current - e3) / e3) * 100, 2),
     }
 
 def scr_prepare_volume_data(df, interval):
-    if interval in ['1h', '1d']:
+    """Aggregate sub-hourly candles to 1h. df must have a tz-naive DatetimeIndex."""
+    if interval in ('1h', '1d'):
         return df
-    return df.resample('1h').agg({
-        'open':'first','high':'max','low':'min','close':'last','volume':'sum'
-    }).dropna(subset=['high','close'])
+    try:
+        resampled = df.resample('1h').agg({
+            'open': 'first', 'high': 'max', 'low': 'min',
+            'close': 'last', 'volume': 'sum'
+        }).dropna(subset=['high', 'close'])
+        return resampled if not resampled.empty else df
+    except Exception:
+        return df
 
 def scr_check_volume_symbol(symbol, config):
     interval         = config.get('interval', '15m')
@@ -1103,8 +1158,10 @@ def scr_check_volume_symbol(symbol, config):
     df = scr_fetch_history(symbol, interval=interval, period=period)
     if df.empty:
         return False, 'No data'
-    df = scr_prepare_volume_data(df, interval)
-    if len(df) < max(21, rsi_length + 5):
+
+    df = scr_prepare_volume_data(df, interval).copy()
+    min_rows = max(21, rsi_length + 5)
+    if len(df) < min_rows:
         return False, 'Insufficient data'
 
     prev_5_vol   = float(df.iloc[-10:-5]['volume'].mean())
@@ -1112,6 +1169,7 @@ def scr_check_volume_symbol(symbol, config):
     prev_5_price = float(df.iloc[-10:-5]['close'].mean())
     curr_5_price = float(df.iloc[-5:]['close'].mean())
     current_price = float(df.iloc[-1]['close'])
+
     if prev_5_vol <= 0 or prev_5_price <= 0:
         return False, 'Zero denominator'
 
@@ -1120,22 +1178,24 @@ def scr_check_volume_symbol(symbol, config):
     if pd.isna(current_rsi):
         return False, 'RSI not available'
 
-    volume_ratio    = curr_5_vol / prev_5_vol
+    volume_ratio     = curr_5_vol / prev_5_vol
     price_change_pct = ((curr_5_price - prev_5_price) / prev_5_price) * 100
-    bb_position     = scr_calculate_bollinger_position(df['close'])
+    bb_position      = scr_calculate_bollinger_position(df['close'])
 
-    if (volume_ratio >= volume_threshold and price_change_pct >= price_threshold
-            and current_price > min_price and current_rsi > rsi_threshold
+    if (volume_ratio >= volume_threshold
+            and price_change_pct >= price_threshold
+            and current_price > min_price
+            and current_rsi > rsi_threshold
             and curr_5_vol > prev_5_vol):
         return True, {
-            'symbol': scr_normalize_symbol(symbol),
-            'prev_5_vol': round(prev_5_vol),
-            'curr_5_vol': round(curr_5_vol),
-            'current_price': round(current_price, 2),
-            'volume_ratio': round(volume_ratio, 2),
+            'symbol':           symbol,
+            'prev_5_vol':       round(prev_5_vol),
+            'curr_5_vol':       round(curr_5_vol),
+            'current_price':    round(current_price, 2),
+            'volume_ratio':     round(volume_ratio, 2),
             'price_change_pct': round(price_change_pct, 2),
-            'rsi': round(current_rsi, 1),
-            'bb_position': bb_position,
+            'rsi':              round(current_rsi, 1),
+            'bb_position':      bb_position,
         }
     return False, 'No volume breakout'
 
