@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integrated Stock Scanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Syne:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/screener/static/css/styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div>
+        <h1 class="brand-title">⬡ Integrated Stock Scanner</h1>
+        <p class="brand-subtitle">Two scanners · Excel sheet source · Live scan progress</p>
+      </div>
+      <button id="themeToggle" class="theme-toggle" type="button" aria-label="Toggle light and dark mode">
+        <span id="themeIcon">🌙</span>
+        <span id="themeLabel">Dark</span>
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card source-card">
+      <div class="source-grid compact-source-grid">
+        <label>
+          Select Excel Sheet
+          <select id="sheetSelect"></select>
+        </label>
+        <button id="loadSymbolsBtn" class="secondary">Load Symbols</button>
+        <div class="symbol-count"><span id="symbolCount">0</span> symbols loaded</div>
+      </div>
+    </section>
+
+    <section class="tabs card">
+      <div class="tab-buttons">
+        <button class="tab-btn active" data-tab="emaTab">EMA + RSI Bullish Reversal</button>
+        <button class="tab-btn" data-tab="volumeTab">Volume & Price Breakout</button>
+      </div>
+
+      <div class="scan-status-block inline-progress">
+        <div id="status">Ready.</div>
+        <div class="progress-shell" aria-label="Scan progress">
+          <div id="scanProgressBar" class="progress-bar"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="progressText">0%</span>
+          <span id="currentTicker">Ticker: -</span>
+          <span id="scanCounts">Scanned: 0 / 0 | Matches: 0</span>
+        </div>
+      </div>
+
+      <section id="emaTab" class="tab-pane active">
+        <div class="section-title">
+          <div>
+            <h2>EMA + RSI Bullish Reversal Scanner</h2>
+            <p>Finds stocks that were below all selected EMAs during the lookback window and are now above all selected EMAs.</p>
+          </div>
+          <div class="button-group">
+            <button class="run-btn" data-scanner="ema">Start EMA Scan</button>
+            <button class="stop-btn danger" disabled>Stop Scan</button>
+            <button class="clear-btn secondary" data-scanner="ema">Clear Results</button>
+          </div>
+        </div>
+        <div class="config-grid">
+          <label>Timeframe
+            <select id="emaTimeframe">
+              <option value="60min">60 Minutes</option>
+              <option value="Daily">Daily</option>
+              <option value="Weekly" selected>Weekly</option>
+            </select>
+          </label>
+          <label>Lookback Days <input id="emaLookback" type="number" value="20" min="1"></label>
+          <label>EMA 1 <input id="ema1" type="number" value="9" min="1"></label>
+          <label>EMA 2 <input id="ema2" type="number" value="18" min="1"></label>
+          <label>EMA 3 <input id="ema3" type="number" value="27" min="1"></label>
+        </div>
+        <div class="table-wrap">
+          <table id="emaResults">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Current Price</th><th>RSI(14)</th><th>EMA1 Diff %</th><th>EMA2 Diff %</th><th>EMA3 Diff %</th><th>Chart</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="volumeTab" class="tab-pane">
+        <div class="section-title">
+          <div>
+            <h2>Volume & Price Breakout Scanner</h2>
+            <p>Checks volume ratio, price change, minimum price, RSI, and Bollinger Band position.</p>
+          </div>
+          <div class="button-group">
+            <button class="run-btn" data-scanner="volume">Start Volume Scan</button>
+            <button class="stop-btn danger" disabled>Stop Scan</button>
+            <button class="clear-btn secondary" data-scanner="volume">Clear Results</button>
+          </div>
+        </div>
+        <div class="config-grid">
+          <label>Interval
+            <select id="volInterval">
+              <option value="15m" selected>15m</option>
+              <option value="1h">1h</option>
+              <option value="1d">1d</option>
+            </select>
+          </label>
+          <label>Volume Ratio ≥ <input id="volThreshold" type="number" value="2.0" step="0.1" min="0"></label>
+          <label>Price Change % ≥ <input id="priceThreshold" type="number" value="3.0" step="0.1"></label>
+          <label>Minimum Price ≥ <input id="minPrice" type="number" value="100" step="1"></label>
+          <label>RSI &gt; <input id="rsiThreshold" type="number" value="55" step="1"></label>
+          <label>RSI Length <input id="rsiLength" type="number" value="14" min="2"></label>
+        </div>
+        <div class="table-wrap">
+          <table id="volumeResults">
+            <thead>
+              <tr>
+                <th>Symbol</th><th>Prev 5 Period Vol</th><th>Curr 5 Period Vol</th><th>Current Price</th><th>Vol Ratio</th><th>Price Change %</th><th>RSI</th><th>BB Position</th><th>Chart</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section class="card export-card">
+      <button id="exportCsvBtn" class="secondary">Export Active Results CSV</button>
+    </section>
+  </main>
+
+  <script src="/screener/static/js/app.js"></script>
+</body>
+</html>
