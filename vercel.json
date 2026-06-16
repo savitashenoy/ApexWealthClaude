@@ -1,12 +1,9 @@
 {
   "version": 2,
   "rewrites": [
-    { "source": "/api/(.*)",             "destination": "/api/index.py" },
-    { "source": "/admin",                "destination": "/api/index.py" },
-    { "source": "/screener",             "destination": "/api/index.py" },
-    { "source": "/screener/api/(.*)",    "destination": "/api/index.py" },
-    { "source": "/screener/static/(.*)", "destination": "/screener/static/$1" },
-    { "source": "/static/(.*)",          "destination": "/static/$1"   },
-    { "source": "/(.*)",                 "destination": "/index.html"  }
+    { "source": "/api/(.*)",    "destination": "/api/index.py" },
+    { "source": "/admin",       "destination": "/api/index.py" },
+    { "source": "/static/(.*)", "destination": "/static/$1"   },
+    { "source": "/(.*)",        "destination": "/index.html"  }
   ]
 }

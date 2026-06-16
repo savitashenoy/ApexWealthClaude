@@ -1012,7 +1012,6 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
       <button class="nav-page-btn" onclick="showPage('watchlist')"><i class="fa fa-star"></i> Watchlist</button>
       <button class="nav-page-btn" onclick="showPage('analysis')"><i class="fa fa-chart-line"></i> Analysis</button>
       <button class="nav-page-btn" onclick="showPage('markets')"><i class="fa fa-globe"></i> Markets</button>
-      <button class="nav-page-btn" onclick="showPage('screener')"><i class="fa fa-filter"></i> Screener</button>
     </div>
     <div class="nav-user">
       <div class="nav-avatar" id="nav-avatar">U</div>
@@ -1343,19 +1342,6 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
           <div id="losers-list"><div class="loading-overlay"><div class="spinner"></div></div></div>
         </div>
       </div>
-    </div>
-
-    <!-- SCREENER PAGE -->
-    <div class="page" id="page-screener">
-      <div class="page-title"><i class="fa fa-filter"></i> Screener</div>
-      <iframe
-        id="screener-iframe"
-        src="about:blank"
-        style="width:100%;height:calc(100vh - 130px);border:none;border-radius:10px;background:transparent;"
-        allowfullscreen
-      ></iframe>
-    </div>
-
     </div><!-- /.main -->
   </div><!-- /.app-shell -->
 </div><!-- /#app -->
@@ -1719,7 +1705,7 @@ function doLogout() {
 async function showPage(name) {
   document.querySelectorAll('.nav-page-btn').forEach((b,i) => {
     b.classList.remove('active');
-    if (['dashboard','portfolio','watchlist','analysis','markets','screener'][i] === name) b.classList.add('active');
+    if (['dashboard','portfolio','watchlist','analysis','markets'][i] === name) b.classList.add('active');
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
@@ -1732,13 +1718,6 @@ async function loadPage(name) {
   else if (name === 'watchlist') { await loadWatchlistGroups(); await loadWatchlist(); }
   else if (name === 'markets') await loadMarkets();
   else if (name === 'analysis') { if (analysisTicker) await loadAnalysisSequence(); }
-  else if (name === 'screener') {
-    const iframe = document.getElementById('screener-iframe');
-    // Load only once — avoid re-triggering scans on every nav
-    if (iframe && iframe.src === 'about:blank') {
-      iframe.src = '/screener';
-    }
-  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
