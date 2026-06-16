@@ -1057,32 +1057,48 @@ def scr_fetch_history(symbol, interval, period=None, days=None):
         return pd.DataFrame()
 
 def scr_check_ema_symbol(symbol, config):
+    """EMA + RSI Bullish Reversal scanner.
+
+    Logic (matching original intent):
+    - Fetch `days` worth of OHLCV history for the chosen timeframe.
+    - Compute EMA1/EMA2/EMA3 and RSI14 on the full history.
+    - Condition A (was below cloud): at ANY point in the fetched history the
+      closing price was simultaneously below all three EMAs.
+    - Condition B (now above cloud): the LATEST bar's close is above all three EMAs.
+    - Both conditions must be true → bullish reversal confirmed.
+
+    `lookback_days` controls how many calendar days of history to fetch
+    (NOT a tail-window size). A larger value casts a wider net for stocks
+    that dipped below the cloud further in the past.
+    """
     timeframe     = config.get('timeframe', 'Weekly')
     lookback_days = int(config.get('lookback_days', 20))
     ema1 = int(config.get('ema1', 9))
     ema2 = int(config.get('ema2', 18))
     ema3 = int(config.get('ema3', 27))
 
-    # Map timeframe → yfinance interval and fetch window.
-    # lookback_days is used as the NUMBER OF BARS to look back (not calendar days),
-    # consistent across all timeframes. This avoids the original bug where
-    # Weekly used int(lookback_days/7) = 2 bars — far too short to find reversals.
+    # Map timeframe to yfinance interval and fetch window.
+    # lookback_days is used as calendar days to fetch — larger values find
+    # stocks that dipped below the cloud further in the past.
     if timeframe == '60min':
         interval = '1h'
-        periods  = lookback_days   # treat lookback_days as number of hourly bars
-        days     = max(90, lookback_days + 60)
+        # For intraday hourly: lookback_days calendar days of hourly bars
+        # Fetch 3× extra for EMA warmup
+        days = max(90, lookback_days * 3)
     elif timeframe == 'Daily':
         interval = '1d'
-        periods  = lookback_days
-        days     = max(730, lookback_days * 2)
+        # lookback_days trading days; fetch 4× for EMA warmup
+        days = max(365, lookback_days * 4)
     else:
-        # Weekly — lookback_days IS the number of weekly bars to scan
+        # Weekly — lookback_days is treated as weeks, converted to calendar days
+        # e.g. 20 weeks = 140 days; fetch enough for EMA27 warmup (27 weeks = ~189 days)
+        # We always fetch at least 3 years (1095 days) so EMA27 is stable
         interval = '1wk'
-        periods  = lookback_days   # e.g. 20 → scan last 20 weekly bars (~5 months)
-        days     = max(1460, lookback_days * 10)   # enough history for EMA warmup
+        days = max(1095, lookback_days * 7 * 3)
 
-    # Need enough bars: EMA warmup (largest period × 3 for stability) + lookback + buffer
-    min_needed = max(ema1, ema2, ema3) * 3 + periods + 10
+    # Minimum bars needed: EMA warmup (largest EMA × 2) + buffer
+    min_needed = max(ema1, ema2, ema3) * 2 + 10
+
     df = scr_fetch_history(symbol, interval=interval, days=days)
     if df.empty or len(df) < min_needed:
         return False, 'Insufficient data'
@@ -1096,21 +1112,18 @@ def scr_check_ema_symbol(symbol, config):
     df['rsi14']      = scr_calculate_rsi(close, 14)
     df = df.dropna()
 
-    if len(df) < periods + 2:
+    if len(df) < min_needed:
         return False, 'Insufficient indicator data after warmup'
 
-    # Lookback window: the last `periods` bars BEFORE the current bar
-    # (exclude the last bar so current bar is the "reversal" confirmation bar)
-    lookback = df.iloc[-(periods + 1):-1]
-
-    # Condition A: during the lookback window the price was below ALL three EMAs at least once
+    # Condition A: at ANY point in the fetched history the close was below ALL 3 EMAs
+    # (stock was "under the cloud" at some point in the lookback window)
     below_all = (
-        (lookback['close'] < lookback[f'ema{ema1}']) &
-        (lookback['close'] < lookback[f'ema{ema2}']) &
-        (lookback['close'] < lookback[f'ema{ema3}'])
+        (df['close'] < df[f'ema{ema1}']) &
+        (df['close'] < df[f'ema{ema2}']) &
+        (df['close'] < df[f'ema{ema3}'])
     )
 
-    # Condition B: the latest (current) bar is NOW above ALL three EMAs → reversal confirmed
+    # Condition B: the LATEST bar is NOW above ALL 3 EMAs (reversal confirmed)
     latest  = df.iloc[-1]
     current = float(latest['close'])
     e1 = float(latest[f'ema{ema1}'])
@@ -1122,8 +1135,10 @@ def scr_check_ema_symbol(symbol, config):
 
     above_now = current > e1 and current > e2 and current > e3
 
-    if not below_all.any() or not above_now:
-        return False, 'No bullish EMA reversal'
+    if not below_all.any():
+        return False, 'Never below all EMAs in lookback window'
+    if not above_now:
+        return False, 'Not currently above all EMAs'
 
     return True, {
         'symbol':        symbol,
@@ -1133,7 +1148,6 @@ def scr_check_ema_symbol(symbol, config):
         'ema2_diff_pct': round(((current - e2) / e2) * 100, 2),
         'ema3_diff_pct': round(((current - e3) / e3) * 100, 2),
     }
-
 def scr_prepare_volume_data(df, interval):
     """Aggregate sub-hourly candles to 1h. df must have a tz-naive DatetimeIndex."""
     if interval in ('1h', '1d'):
