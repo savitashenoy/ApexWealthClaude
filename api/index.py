@@ -189,14 +189,17 @@ def signup():
         return jsonify({'error':'Email already registered'}), 409
     user_id = str(uuid.uuid4())
     user    = {'id':user_id,'email':email,'password':hash_password(password),
-               'created':str(datetime.now())}
+               'created':str(datetime.now()),
+               'status':'pending',    # requires admin approval before login
+               'disabled': False}     # can be toggled by admin
     kv_set(user_key(email), user)
     # Maintain index of all users for admin listing
     index = kv_get(users_index_key(), [])
     if email not in index:
         index.append(email)
         kv_set(users_index_key(), index)
-    return jsonify({'message':'Account created','user_id':user_id,'email':email})
+    return jsonify({'message':'Account created – pending approval','user_id':user_id,
+                    'email':email,'status':'pending'})
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -206,6 +209,15 @@ def login():
     user     = kv_get(user_key(email))
     if not user or not check_password(password, user['password']):
         return jsonify({'error':'Invalid credentials'}), 401
+    # Legacy accounts (created before status field) default to approved
+    status   = user.get('status', 'approved')
+    disabled = bool(user.get('disabled', False))
+    if status == 'pending':
+        return jsonify({'error':'Your account is pending admin approval. Please wait for an admin to activate your account.'}), 403
+    if status == 'rejected':
+        return jsonify({'error':'Your account has been rejected. Please contact support.'}), 403
+    if disabled:
+        return jsonify({'error':'Your account has been disabled. Please contact support.'}), 403
     return jsonify({'message':'Login successful','user_id':user['id'],'email':email})
 
 @app.route('/api/change-password', methods=['POST'])
@@ -468,10 +480,13 @@ def admin_list_users():
         u = kv_get(user_key(email))
         if u:
             users.append({
-                'id':         u.get('id', ''),
-                'email':      u.get('email', email),
-                'created':    u.get('created', ''),
+                'id':           u.get('id', ''),
+                'email':        u.get('email', email),
+                'created':      u.get('created', ''),
                 'has_password': bool(u.get('password')),
+                # Legacy accounts without status field default to approved
+                'status':   u.get('status', 'approved'),
+                'disabled': bool(u.get('disabled', False)),
             })
     q = (request.args.get('q') or '').lower().strip()
     if q:
@@ -493,7 +508,9 @@ def admin_create_user():
         return jsonify({'error': 'Email already registered'}), 409
     user_id = str(uuid.uuid4())
     user    = {'id': user_id, 'email': email, 'password': hash_password(password),
-               'created': str(datetime.now())}
+               'created': str(datetime.now()),
+               'status': 'approved',   # admin-created users are pre-approved
+               'disabled': False}
     kv_set(user_key(email), user)
     index = kv_get(users_index_key(), [])
     if email not in index:
@@ -522,6 +539,14 @@ def admin_edit_user(user_id):
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
     if new_password:
         user['password'] = hash_password(new_password)
+    # Status: approved / pending / rejected
+    if 'status' in data:
+        new_status = str(data['status']).lower().strip()
+        if new_status in ('approved', 'pending', 'rejected'):
+            user['status'] = new_status
+    # Enabled / disabled toggle
+    if 'disabled' in data:
+        user['disabled'] = bool(data['disabled'])
     if new_email and new_email != target_email:
         # Move user to new email key
         if kv_get(user_key(new_email)):

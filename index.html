@@ -1816,6 +1816,7 @@ async function doLogin(e) {
   const errEl    = document.getElementById('login-error');
   const btn      = document.getElementById('login-btn');
   errEl.textContent = '';
+  errEl.style.color = '';
   btn.innerHTML = '<div class="spinner"></div>';
   try {
     const d = await apiCall('/login', 'POST', { email, password });
@@ -1823,6 +1824,9 @@ async function doLogin(e) {
     localStorage.setItem('apex_session', JSON.stringify(USER));
     startApp();
   } catch(err) {
+    // Surface pending/disabled messages with an amber colour so they're clearly different from wrong-password errors
+    const isPending = err.message && (err.message.toLowerCase().includes('pending') || err.message.toLowerCase().includes('disabled') || err.message.toLowerCase().includes('rejected'));
+    errEl.style.color = isPending ? 'var(--orange)' : '';
     errEl.textContent = err.message;
     btn.textContent = 'Sign In';
   }
@@ -1842,10 +1846,16 @@ async function doSignup(e) {
   if (btn) btn.innerHTML = '<div class="spinner"></div>';
   try {
     const d = await apiCall('/signup', 'POST', { email, password });
-    USER = { user_id: d.user_id, email: d.email };
-    localStorage.setItem('apex_session', JSON.stringify(USER));
-    startApp();
+    // New accounts are PENDING — show approval message instead of logging in
+    errEl.style.color = 'var(--orange)';
+    errEl.textContent = '⏳ Your account is currently PENDING admin approval. You will be able to sign in once an admin approves your account.';
+    if (btn) btn.textContent = 'Create Account';
+    // Clear the form so they know it was submitted
+    document.getElementById('signup-email').value    = '';
+    document.getElementById('signup-password').value = '';
+    document.getElementById('signup-confirm').value  = '';
   } catch(err) {
+    errEl.style.color = '';
     errEl.textContent = err.message;
     if (btn) btn.textContent = 'Create Account';
   }

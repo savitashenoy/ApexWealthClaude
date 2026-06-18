@@ -360,6 +360,8 @@
                 <th>Email / Username</th>
                 <th>Member Since</th>
                 <th>Password</th>
+                <th style="width:90px">Status</th>
+                <th style="width:80px">Enabled</th>
                 <th style="width:130px">Actions</th>
               </tr>
             </thead>
@@ -387,6 +389,14 @@
       <div class="form-field">
         <label>New Password <span style="color:var(--dim);font-weight:400">(leave blank to keep current)</span></label>
         <input id="edit-pass" type="password" placeholder="New password…"/>
+      </div>
+      <div class="form-field">
+        <label>Account Status</label>
+        <select id="edit-status" style="width:100%;background:var(--card);border:1px solid var(--border2);border-radius:8px;padding:10px 13px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+          <option value="approved">Approved — can log in</option>
+          <option value="pending">Pending — awaiting approval</option>
+          <option value="rejected">Rejected — access denied</option>
+        </select>
       </div>
     </div>
     <div class="form-error"   id="edit-error"></div>
@@ -605,30 +615,67 @@ function renderUsers(users) {
   document.getElementById('user-count').textContent =
     users.length + ' user' + (users.length !== 1 ? 's' : '');
   if (!users.length) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="6">No users found. Use the Rebuild Index button above if users exist in KV.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No users found. Use the Rebuild Index button above if users exist in KV.</td></tr>';
     return;
   }
   var rows = [];
   users.forEach(function(u, i) {
     var tr = document.createElement('tr');
+    // Status badge colours
+    var st    = u.status || 'approved';
+    var stBg  = st==='approved' ? 'rgba(39,174,96,.18)' : st==='pending' ? 'rgba(243,156,18,.18)' : 'rgba(231,76,60,.18)';
+    var stCol = st==='approved' ? '#27ae60'              : st==='pending' ? '#f39c12'              : '#e74c3c';
+    var stLbl = st.charAt(0).toUpperCase() + st.slice(1);
+    var enabled = !u.disabled;
     tr.innerHTML =
       '<td class="td-mono td-dim">' + (i+1) + '</td>' +
-      '<td class="td-mono td-dim" style="font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escH(u.id) + '">' + escH((u.id||'').slice(0,12)) + '…</td>' +
+      '<td class="td-mono td-dim" style="font-size:11px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escH(u.id) + '">' + escH((u.id||'').slice(0,12)) + '&#x2026;</td>' +
       '<td style="font-weight:500">' + escH(u.email) + '</td>' +
       '<td class="td-mono td-dim">' + fmtDate(u.created) + '</td>' +
-      '<td class="td-mono td-dim" style="letter-spacing:.1em">••••••••</td>' +
+      '<td class="td-mono td-dim" style="letter-spacing:.1em">&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;</td>' +
+      '<td><span style="display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600;background:' + stBg + ';color:' + stCol + '">' + stLbl + '</span></td>' +
+      '<td style="text-align:center">' +
+        '<label class="scr-toggle-wrap" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer;font-size:.75rem">' +
+          '<input type="checkbox" class="scr-enable-chk"' + (enabled ? ' checked' : '') + '> ' +
+          '<span class="scr-toggle-lbl">' + (enabled ? 'On' : 'Off') + '</span>' +
+        '</label>' +
+      '</td>' +
       '<td><div class="td-actions">' +
-        '<button class="btn btn-edit btn-sm" data-uid="' + escH(u.id) + '" data-email="' + escH(u.email) + '" title="Edit">✏ Edit</button>' +
-        '<button class="btn btn-danger btn-sm" data-uid="' + escH(u.id) + '" data-email="' + escH(u.email) + '" title="Delete">🗑</button>' +
+        '<button class="btn btn-success btn-sm scr-approve-btn" style="' + (st==='approved' ? 'display:none' : '') + '" title="Approve">&#x2713; Approve</button>' +
+        '<button class="btn btn-edit btn-sm scr-edit-btn" title="Edit">&#x270F; Edit</button>' +
+        '<button class="btn btn-danger btn-sm scr-del-btn" title="Delete">&#x1F5D1;</button>' +
       '</div></td>';
-    // Wire up buttons via event listeners to avoid quote issues
-    var btns = tr.querySelectorAll('button');
-    btns[0].addEventListener('click', (function(uid, email){ return function(){ openEditModal(uid, email); }; })(u.id, u.email));
-    btns[1].addEventListener('click', (function(uid, email){ return function(){ openDeleteModal(uid, email); }; })(u.id, u.email));
+    // Wire buttons via closures
+    tr.querySelector('.scr-approve-btn').addEventListener('click', (function(uid){ return async function(){ await approveUser(uid); }; })(u.id));
+    tr.querySelector('.scr-edit-btn').addEventListener('click',    (function(uid, email){ return function(){ openEditModal(uid, email); }; })(u.id, u.email));
+    tr.querySelector('.scr-del-btn').addEventListener('click',     (function(uid, email){ return function(){ openDeleteModal(uid, email); }; })(u.id, u.email));
+    tr.querySelector('.scr-enable-chk').addEventListener('change', (function(uid, lbl){ return async function(){
+      lbl.textContent = this.checked ? 'On' : 'Off';
+      await toggleUserDisabled(uid, !this.checked);
+    }; })(u.id, tr.querySelector('.scr-toggle-lbl')));
     rows.push(tr);
   });
   tbody.innerHTML = '';
   rows.forEach(function(tr){ tbody.appendChild(tr); });
+}
+
+
+// ── Quick approve & enable/disable helpers ────────────────────────────────────
+async function approveUser(userId) {
+  try {
+    await adminFetch('/admin/users/' + userId, 'PUT', { status: 'approved' });
+    showToast('User approved', 'ok');
+    await loadUsers();
+  } catch(err) { showToast(err.message, 'err'); }
+}
+
+async function toggleUserDisabled(userId, disable) {
+  try {
+    await adminFetch('/admin/users/' + userId, 'PUT', { disabled: disable });
+    showToast(disable ? 'User disabled' : 'User enabled', 'ok');
+    // Refresh stats without full table reload for snappier UX
+    await loadStats();
+  } catch(err) { showToast(err.message, 'err'); }
 }
 
 function filterUsers() {
@@ -666,8 +713,11 @@ async function createUser() {
 // ── edit modal ────────────────────────────────────────────────────────────────
 function openEditModal(userId, email) {
   editUserId = userId;
-  document.getElementById('edit-email').value = email;
-  document.getElementById('edit-pass').value  = '';
+  // Find user in cached allUsers to pre-populate status
+  var u = allUsers.find(function(x){ return x.id === userId; }) || {};
+  document.getElementById('edit-email').value  = email;
+  document.getElementById('edit-pass').value   = '';
+  document.getElementById('edit-status').value = u.status || 'approved';
   document.getElementById('edit-modal-sub').textContent = 'Editing account: ' + email;
   document.getElementById('edit-error').className = 'form-error';
   document.getElementById('edit-modal').classList.add('open');
@@ -691,8 +741,10 @@ async function saveEditUser() {
   btn.innerHTML = '<div class="spinner"></div>';
   btn.disabled  = true;
   try {
-    var body = { email: email };
-    if (pass) body.password = pass;
+    var body   = { email: email };
+    if (pass)  body.password = pass;
+    var status = document.getElementById('edit-status').value;
+    if (status) body.status = status;
     await adminFetch('/admin/users/' + editUserId, 'PUT', body);
     closeEditModal();
     showToast('User updated successfully', 'ok');
