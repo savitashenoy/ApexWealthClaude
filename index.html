@@ -1012,6 +1012,7 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
       <button class="nav-page-btn" onclick="showPage('watchlist')"><i class="fa fa-star"></i> Watchlist</button>
       <button class="nav-page-btn" onclick="showPage('analysis')"><i class="fa fa-chart-line"></i> Analysis</button>
       <button class="nav-page-btn" onclick="showPage('markets')"><i class="fa fa-globe"></i> Markets</button>
+      <button class="nav-page-btn" onclick="showPage('screener')"><i class="fa fa-filter"></i> Screener</button>
     </div>
     <div class="nav-user">
       <div class="nav-avatar" id="nav-avatar">U</div>
@@ -1342,6 +1343,184 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
           <div id="losers-list"><div class="loading-overlay"><div class="spinner"></div></div></div>
         </div>
       </div>
+    <!-- ══════════════════════════════════════════════════════════════
+         SCREENER PAGE
+    ══════════════════════════════════════════════════════════════ -->
+    <div class="page" id="page-screener">
+      <div class="page-title"><i class="fa fa-filter"></i> Stock Screener
+        <span style="font-size:.72rem;color:var(--dim);font-weight:400;margin-left:8px;font-family:'JetBrains Mono',monospace">4 scanners · NSE live data</span>
+      </div>
+
+      <!-- Source row -->
+      <div class="card" style="padding:14px 20px;margin-bottom:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div class="form-label">Excel Sheet</div>
+          <select class="form-input" id="scr-sheet" style="min-width:160px" onchange="scrLoadSymbols()"></select>
+        </div>
+        <button class="btn btn-outline" id="scr-load-btn" onclick="scrLoadSymbols()" style="padding:10px 16px;margin-top:16px"><i class="fa fa-rotate-right"></i> Load</button>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--dim);margin-top:16px">
+          <span id="scr-symbol-count" style="color:var(--text);font-weight:600">0</span> symbols loaded
+        </div>
+        <!-- progress block -->
+        <div style="margin-left:auto;min-width:280px;display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:.72rem;color:var(--dim);font-family:'JetBrains Mono',monospace" id="scr-status">Ready.</div>
+          <div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div id="scr-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--green));transition:width .2s"></div>
+          </div>
+          <div style="display:flex;gap:12px;font-size:.68rem;color:var(--dim);font-family:'JetBrains Mono',monospace">
+            <span id="scr-pct">0%</span>
+            <span id="scr-ticker">Ticker: —</span>
+            <span id="scr-counts">Scanned: 0 / 0 | Matches: 0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scanner tabs -->
+      <div class="card" style="padding:0">
+        <div class="tabs-bar" style="padding:0 20px">
+          <button class="tab-btn active" id="scr-tab-ema"         onclick="scrSetTab('ema')">EMA + RSI Reversal</button>
+          <button class="tab-btn"        id="scr-tab-volume"      onclick="scrSetTab('volume')">Volume &amp; Price Breakout</button>
+          <button class="tab-btn"        id="scr-tab-orb"         onclick="scrSetTab('orb')">Opening Range Breakout</button>
+          <button class="tab-btn"        id="scr-tab-priceaction" onclick="scrSetTab('priceaction')">Price Action</button>
+        </div>
+
+        <!-- EMA TAB -->
+        <div class="tab-content active" id="scr-pane-ema" style="padding:18px 20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">EMA + RSI Bullish Reversal Scanner</div>
+              <div style="font-size:.75rem;color:var(--dim)">Finds stocks that were below all selected EMAs and are now above all of them.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary scr-run-btn" data-scanner="ema" onclick="scrRunScan('ema')"><i class="fa fa-play"></i> Start Scan</button>
+              <button class="btn btn-outline scr-stop-btn" disabled onclick="scrStop()"><i class="fa fa-stop"></i> Stop</button>
+              <button class="btn btn-outline" onclick="scrClear('ema')"><i class="fa fa-trash"></i> Clear</button>
+              <button class="btn btn-outline" onclick="scrExportCsv('ema')"><i class="fa fa-download"></i> CSV</button>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div class="form-group" style="min-width:130px">
+              <div class="form-label">Timeframe</div>
+              <select class="form-input" id="scr-ema-timeframe">
+                <option value="60min">60 Minutes</option>
+                <option value="Daily">Daily</option>
+                <option value="Weekly" selected>Weekly</option>
+              </select>
+            </div>
+            <div class="form-group"><div class="form-label">Lookback Days</div><input class="form-input" type="number" id="scr-ema-lookback" value="20" min="1" style="width:90px"></div>
+            <div class="form-group"><div class="form-label">EMA 1</div><input class="form-input" type="number" id="scr-ema1" value="9" min="1" style="width:70px"></div>
+            <div class="form-group"><div class="form-label">EMA 2</div><input class="form-input" type="number" id="scr-ema2" value="18" min="1" style="width:70px"></div>
+            <div class="form-group"><div class="form-label">EMA 3</div><input class="form-input" type="number" id="scr-ema3" value="27" min="1" style="width:70px"></div>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Current Price</th><th>RSI(14)</th><th>EMA1 Diff %</th><th>EMA2 Diff %</th><th>EMA3 Diff %</th><th>Chart</th></tr></thead><tbody id="scr-ema-tbody"></tbody></table></div>
+        </div>
+
+        <!-- VOLUME TAB -->
+        <div class="tab-content" id="scr-pane-volume" style="padding:18px 20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">Volume &amp; Price Breakout Scanner</div>
+              <div style="font-size:.75rem;color:var(--dim)">Checks volume ratio, price change, minimum price, RSI, and Bollinger Band position.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary scr-run-btn" data-scanner="volume" onclick="scrRunScan('volume')"><i class="fa fa-play"></i> Start Scan</button>
+              <button class="btn btn-outline scr-stop-btn" disabled onclick="scrStop()"><i class="fa fa-stop"></i> Stop</button>
+              <button class="btn btn-outline" onclick="scrClear('volume')"><i class="fa fa-trash"></i> Clear</button>
+              <button class="btn btn-outline" onclick="scrExportCsv('volume')"><i class="fa fa-download"></i> CSV</button>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div class="form-group" style="min-width:100px">
+              <div class="form-label">Interval</div>
+              <select class="form-input" id="scr-vol-interval"><option value="15m" selected>15m</option><option value="1h">1h</option><option value="1d">1d</option></select>
+            </div>
+            <div class="form-group"><div class="form-label">Volume Ratio ≥</div><input class="form-input" type="number" id="scr-vol-threshold" value="2.0" step="0.1" style="width:80px"></div>
+            <div class="form-group"><div class="form-label">Price Change % ≥</div><input class="form-input" type="number" id="scr-price-threshold" value="3.0" step="0.1" style="width:80px"></div>
+            <div class="form-group"><div class="form-label">Min Price ≥</div><input class="form-input" type="number" id="scr-min-price" value="100" step="1" style="width:80px"></div>
+            <div class="form-group"><div class="form-label">RSI &gt;</div><input class="form-input" type="number" id="scr-rsi-threshold" value="55" step="1" style="width:70px"></div>
+            <div class="form-group"><div class="form-label">RSI Length</div><input class="form-input" type="number" id="scr-rsi-length" value="14" min="2" style="width:70px"></div>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Prev 5 Vol</th><th>Curr 5 Vol</th><th>Price</th><th>Vol Ratio</th><th>Price Chg %</th><th>RSI</th><th>BB Position</th><th>Chart</th></tr></thead><tbody id="scr-vol-tbody"></tbody></table></div>
+        </div>
+
+        <!-- ORB TAB -->
+        <div class="tab-content" id="scr-pane-orb" style="padding:18px 20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">Opening Range Breakout + Open High/Low Scanner</div>
+              <div style="font-size:.75rem;color:var(--dim)">15-minute ORB and daily OpenHigh/OpenLow checks.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary scr-run-btn" data-scanner="orb" onclick="scrRunScan('orb')"><i class="fa fa-play"></i> Start Scan</button>
+              <button class="btn btn-outline scr-stop-btn" disabled onclick="scrStop()"><i class="fa fa-stop"></i> Stop</button>
+              <button class="btn btn-outline" onclick="scrClear('orb')"><i class="fa fa-trash"></i> Clear</button>
+              <button class="btn btn-outline" onclick="scrExportCsv('orb')"><i class="fa fa-download"></i> CSV</button>
+            </div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:10px;align-items:center">
+            <label style="display:flex;align-items:center;gap:6px;font-size:.8rem;cursor:pointer"><input type="checkbox" id="scr-run-orb" checked> Run 15 Min ORB</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:.8rem;cursor:pointer"><input type="checkbox" id="scr-run-ohl" checked> Run Open H/L</label>
+            <div class="form-group"><div class="form-label">ORB Start</div><input class="form-input" type="time" id="scr-orb-start" value="09:15" style="width:100px"></div>
+            <div class="form-group"><div class="form-label">ORB End</div><input class="form-input" type="time" id="scr-orb-end" value="10:00" style="width:100px"></div>
+            <div class="form-group"><div class="form-label">Min Vol Mult(X)</div><input class="form-input" type="number" id="scr-orb-vol-mult" value="1.5" step="0.1" style="width:80px"></div>
+          </div>
+          <!-- ORB Filters -->
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+            <div class="form-group" style="min-width:110px"><div class="form-label">Signal</div><select class="form-input" id="scr-orb-signal" onchange="scrRedrawOrb()"><option>All</option><option>Bullish</option><option>Bearish</option></select></div>
+            <div class="form-group" style="min-width:110px"><div class="form-label">Open H/L</div><select class="form-input" id="scr-orb-openhl" onchange="scrRedrawOrb()"><option>All</option><option>OpenHigh</option><option>OpenLow</option><option>-</option></select></div>
+            <div class="form-group"><div class="form-label">RSI Op</div><select class="form-input" id="scr-orb-rsi-op" onchange="scrRedrawOrb()" style="width:70px"><option>&gt;</option><option>&lt;</option><option>&gt;=</option><option>&lt;=</option><option>=</option></select></div>
+            <div class="form-group"><div class="form-label">RSI Value</div><input class="form-input" type="number" id="scr-orb-rsi-val" step="0.1" placeholder="Any" oninput="scrRedrawOrb()" style="width:80px"></div>
+            <div class="form-group"><div class="form-label">VolX Op</div><select class="form-input" id="scr-orb-volx-op" onchange="scrRedrawOrb()" style="width:70px"><option>&gt;</option><option>&lt;</option><option>&gt;=</option><option>&lt;=</option><option>=</option></select></div>
+            <div class="form-group"><div class="form-label">VolX Value</div><input class="form-input" type="number" id="scr-orb-volx-val" step="0.1" placeholder="Any" oninput="scrRedrawOrb()" style="width:80px"></div>
+          </div>
+          <!-- ORB sub-tabs -->
+          <div class="tabs-bar" style="margin-bottom:10px;padding:0">
+            <button class="tab-btn active" id="scr-orb-sub-orb" onclick="scrSetOrbSubTab('orb')">15 Min ORB Results</button>
+            <button class="tab-btn"        id="scr-orb-sub-ohl" onclick="scrSetOrbSubTab('ohl')">Open High/Low Results</button>
+          </div>
+          <div id="scr-orb-pane" class="tab-content active" style="padding:0">
+            <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Signal</th><th>Breakout Lvl</th><th>LTP</th><th>Open H/L</th><th>Change %</th><th>RSI(14)</th><th>VolX</th><th>Chart</th></tr></thead><tbody id="scr-orb-tbody"></tbody></table></div>
+          </div>
+          <div id="scr-ohl-pane" class="tab-content" style="padding:0">
+            <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>LTP</th><th>Change %</th><th>RSI(14)</th><th>Open H/L</th><th>Action</th><th>Chart</th></tr></thead><tbody id="scr-ohl-tbody"></tbody></table></div>
+          </div>
+        </div>
+
+        <!-- PRICE ACTION TAB -->
+        <div class="tab-content" id="scr-pane-priceaction" style="padding:18px 20px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">Price Action Condition Scanner</div>
+              <div style="font-size:.75rem;color:var(--dim)">Compare OHLC values across intraday, day, week, and month candles.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary scr-run-btn" data-scanner="priceaction" onclick="scrRunScan('priceaction')"><i class="fa fa-play"></i> Start Scan</button>
+              <button class="btn btn-outline scr-stop-btn" disabled onclick="scrStop()"><i class="fa fa-stop"></i> Stop</button>
+              <button class="btn btn-outline" onclick="scrClear('priceaction')"><i class="fa fa-trash"></i> Clear</button>
+              <button class="btn btn-outline" onclick="scrExportCsv('priceaction')"><i class="fa fa-download"></i> CSV</button>
+            </div>
+          </div>
+          <!-- PA Filters -->
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:8px">
+            <div class="form-group"><div class="form-label">RSI Filter</div><select class="form-input" id="scr-pa-rsi-op" onchange="scrRedrawPa()"><option>Any</option><option>Greater Than</option><option>Less Than</option></select></div>
+            <div class="form-group"><div class="form-label">RSI Value</div><input class="form-input" type="number" id="scr-pa-rsi-val" value="70" oninput="scrRedrawPa()" style="width:80px"></div>
+            <div class="form-group" style="min-width:130px"><div class="form-label">BB Position</div><select class="form-input" id="scr-pa-bb" onchange="scrRedrawPa()"><option>Any</option><option>Above Band</option><option>Below Band</option><option>At Upper</option><option>At Lower</option><option>At Middle</option><option>Upper Zone</option><option>Lower Zone</option><option>Above Mid</option><option>Below Mid</option><option>N/A</option></select></div>
+            <div class="form-group"><div class="form-label">Change % Op</div><select class="form-input" id="scr-pa-chg-op" onchange="scrRedrawPa()" style="width:70px"><option>Any</option><option>&gt;</option><option>&lt;</option><option>&gt;=</option><option>&lt;=</option></select></div>
+            <div class="form-group"><div class="form-label">Change % Val</div><input class="form-input" type="number" id="scr-pa-chg-val" value="2" step="0.1" oninput="scrRedrawPa()" style="width:80px"></div>
+          </div>
+          <!-- Condition builder -->
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px">
+            <div style="display:grid;grid-template-columns:32px 1fr 1fr 1fr 50px 1fr 1fr 1fr;gap:6px;font-size:.65rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;padding:0 4px 6px;border-bottom:1px solid var(--border);margin-bottom:6px">
+              <span>On</span><span>Offset</span><span>Period</span><span>Value</span><span style="text-align:center">Op</span><span>Offset</span><span>Period</span><span>Value</span>
+            </div>
+            <div id="scr-pa-conditions"></div>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>LTP</th><th>Change %</th><th>RSI</th><th>BB Position</th><th>D-Close %</th><th>W-Close %</th><th>M-Close %</th><th>Volume</th><th>10D Vol High</th><th>Chart</th></tr></thead><tbody id="scr-pa-tbody"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+    <!-- ══════════════════════════ END SCREENER ══════════════════════════ -->
+
     </div><!-- /.main -->
   </div><!-- /.app-shell -->
 </div><!-- /#app -->
@@ -1705,7 +1884,7 @@ function doLogout() {
 async function showPage(name) {
   document.querySelectorAll('.nav-page-btn').forEach((b,i) => {
     b.classList.remove('active');
-    if (['dashboard','portfolio','watchlist','analysis','markets'][i] === name) b.classList.add('active');
+    if (['dashboard','portfolio','watchlist','analysis','markets','screener'][i] === name) b.classList.add('active');
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
@@ -1718,6 +1897,7 @@ async function loadPage(name) {
   else if (name === 'watchlist') { await loadWatchlistGroups(); await loadWatchlist(); }
   else if (name === 'markets') await loadMarkets();
   else if (name === 'analysis') { if (analysisTicker) await loadAnalysisSequence(); }
+  else if (name === 'screener') { if (!scrInitDone) await scrInit(); }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -3266,6 +3446,330 @@ async function parseXLSX(file) {
   const wb   = XLSX.read(buf, {type:'array'});
   const ws   = wb.Sheets[wb.SheetNames[0]];
   return XLSX.utils.sheet_to_json(ws, {defval:''});
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SCREENER — 4-scanner stock screener integrated into ApexWealth
+// ══════════════════════════════════════════════════════════════════════════════
+let scrActiveScanner = 'ema';
+let scrResults       = { ema:[], volume:[], orb:[], ohl:[], priceaction:[] };
+let scrRunning       = false;
+let scrAbortCtrl     = null;
+let scrInitDone      = false;
+
+function scrSetStatus(msg) {
+  const el = document.getElementById('scr-status');
+  if (el) el.textContent = msg;
+}
+
+function scrSetProgress({ percent=0, symbol='-', scanned=0, total=0, matches=0 } = {}) {
+  const p = Math.max(0, Math.min(100, Number(percent) || 0));
+  const bar = document.getElementById('scr-progress-bar');
+  if (bar) bar.style.width = p + '%';
+  const pct = document.getElementById('scr-pct');
+  if (pct) pct.textContent = p.toFixed(p % 1 ? 1 : 0) + '%';
+  const tk = document.getElementById('scr-ticker');
+  if (tk) tk.textContent = 'Ticker: ' + (symbol || '—');
+  const ct = document.getElementById('scr-counts');
+  if (ct) ct.textContent = `Scanned: ${scanned||0} / ${total||0} | Matches: ${matches||0}`;
+}
+
+function scrTvUrl(symbol, interval='60') {
+  const clean = String(symbol||'').replace('.NS','').replace('.BO','').replace('NSE:','');
+  return `https://www.tradingview.com/chart/?symbol=NSE:${encodeURIComponent(clean)}&interval=${interval}`;
+}
+
+async function scrInit() {
+  scrInitDone = true;
+  scrBuildPaConditions();
+  await scrLoadSheets();
+}
+
+async function scrLoadSheets() {
+  try {
+    const r = await fetch('/api/scr/sheets');
+    const d = await r.json();
+    const sel = document.getElementById('scr-sheet');
+    if (!sel) return;
+    sel.innerHTML = '';
+    (d.sheets || []).forEach(name => {
+      const o = document.createElement('option');
+      o.value = o.textContent = name;
+      sel.appendChild(o);
+    });
+    if ((d.sheets || []).length) await scrLoadSymbols();
+  } catch(e) { scrSetStatus('Failed to load sheets: ' + e.message); }
+}
+
+async function scrLoadSymbols() {
+  const sheet = document.getElementById('scr-sheet')?.value;
+  if (!sheet) return;
+  scrSetStatus('Loading symbols from ' + sheet + '…');
+  try {
+    const r = await fetch('/api/scr/symbols?sheet=' + encodeURIComponent(sheet));
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || 'Failed');
+    const el = document.getElementById('scr-symbol-count');
+    if (el) el.textContent = d.count;
+    scrSetProgress({ percent:0, symbol:'—', scanned:0, total:d.count, matches:0 });
+    scrSetStatus('Loaded ' + d.count + ' symbols from ' + sheet + '.');
+  } catch(e) { scrSetStatus('Error: ' + e.message); }
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function scrSetTab(name) {
+  scrActiveScanner = name;
+  ['ema','volume','orb','priceaction'].forEach(t => {
+    document.getElementById('scr-tab-' + t)?.classList.toggle('active', t === name);
+    document.getElementById('scr-pane-' + t)?.classList.toggle('active', t === name);
+  });
+}
+
+function scrSetOrbSubTab(which) {
+  ['orb','ohl'].forEach(t => {
+    document.getElementById('scr-orb-sub-' + t)?.classList.toggle('active', t === which);
+    document.getElementById('scr-' + t + '-pane')?.classList.toggle('active', t === which);
+  });
+}
+
+// ── Config builders ───────────────────────────────────────────────────────────
+function scrGetConfig(scanner) {
+  const g = id => document.getElementById(id)?.value;
+  const n = id => Number(document.getElementById(id)?.value || 0);
+  const c = id => document.getElementById(id)?.checked;
+  if (scanner === 'ema') return { timeframe:g('scr-ema-timeframe'), lookback_days:n('scr-ema-lookback'), ema1:n('scr-ema1'), ema2:n('scr-ema2'), ema3:n('scr-ema3') };
+  if (scanner === 'volume') return { interval:g('scr-vol-interval'), volume_threshold:n('scr-vol-threshold'), price_threshold:n('scr-price-threshold'), min_price:n('scr-min-price'), rsi_threshold:n('scr-rsi-threshold'), rsi_length:n('scr-rsi-length') };
+  if (scanner === 'orb') return { run_orb:c('scr-run-orb'), run_ohl:c('scr-run-ohl'), start_time:g('scr-orb-start')||'09:15', end_time:g('scr-orb-end')||'10:00', vol_multiplier:n('scr-orb-vol-mult'), interval:'15m' };
+  if (scanner === 'priceaction') {
+    const conditions = [];
+    document.querySelectorAll('.scr-pa-row').forEach(row => {
+      conditions.push({ active:row.querySelector('.scr-pa-active').checked, offset1:row.querySelector('.scr-pa-off1').value, period1:row.querySelector('.scr-pa-per1').value, value1:row.querySelector('.scr-pa-val1').value, operator:row.querySelector('.scr-pa-op').value, offset2:row.querySelector('.scr-pa-off2').value, period2:row.querySelector('.scr-pa-per2').value, value2:row.querySelector('.scr-pa-val2').value });
+    });
+    return { conditions };
+  }
+  return {};
+}
+
+// ── Price Action condition builder ────────────────────────────────────────────
+function scrBuildPaConditions() {
+  const container = document.getElementById('scr-pa-conditions');
+  if (!container) return;
+  container.innerHTML = '';
+  const offsets  = Array.from({length:31},(_,i)=>`${-i} (${i===0?'current':'ago'})`);
+  const periods  = ['5 minute','15 minute','60 minute','Day','Week','Month'];
+  const values   = ['OPEN','HIGH','LOW','CLOSE'];
+  const ops      = ['<','<=','=','>=','>'];
+  const mkSel    = (cls, opts, sel) => { const s=document.createElement('select'); s.className='form-input '+cls; s.style.cssText='padding:5px 8px;font-size:.75rem'; opts.forEach(v=>{ const o=document.createElement('option'); o.value=o.textContent=v; if(v===sel)o.selected=true; s.appendChild(o); }); return s; };
+
+  for (let i=1; i<=6; i++) {
+    const row = document.createElement('div');
+    row.className = 'scr-pa-row';
+    row.style.cssText = 'display:grid;grid-template-columns:32px 1fr 1fr 1fr 50px 1fr 1fr 1fr;gap:6px;margin-bottom:4px;align-items:center';
+    const chk = document.createElement('input'); chk.type='checkbox'; chk.className='scr-pa-active'; if(i===1)chk.checked=true;
+    const off1=mkSel('scr-pa-off1',offsets,'0 (current)');
+    const per1=mkSel('scr-pa-per1',periods,'Day');
+    const val1=mkSel('scr-pa-val1',values,'CLOSE');
+    const op  =mkSel('scr-pa-op',  ops,   '<');
+    const off2=mkSel('scr-pa-off2',offsets,'-1 (ago)');
+    const per2=mkSel('scr-pa-per2',periods,'Month');
+    const val2=mkSel('scr-pa-val2',values, 'HIGH');
+    [chk,off1,per1,val1,op,off2,per2,val2].forEach(el=>row.appendChild(el));
+    container.appendChild(row);
+  }
+}
+
+// ── Clear & scan controls ─────────────────────────────────────────────────────
+function scrClear(scanner) {
+  if (scanner==='ema')         { scrResults.ema=[]; scrClearTbody('scr-ema-tbody'); }
+  if (scanner==='volume')      { scrResults.volume=[]; scrClearTbody('scr-vol-tbody'); }
+  if (scanner==='orb')         { scrResults.orb=[]; scrResults.ohl=[]; scrClearTbody('scr-orb-tbody'); scrClearTbody('scr-ohl-tbody'); }
+  if (scanner==='priceaction') { scrResults.priceaction=[]; scrClearTbody('scr-pa-tbody'); }
+  if (!scrRunning) { scrSetProgress(); scrSetStatus('Results cleared.'); }
+}
+
+function scrClearTbody(id) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = '';
+}
+
+function scrSetControls(running) {
+  scrRunning = running;
+  document.querySelectorAll('.scr-run-btn').forEach(b => b.disabled = running);
+  document.querySelectorAll('.scr-stop-btn').forEach(b => b.disabled = !running);
+  const lb = document.getElementById('scr-load-btn');
+  if (lb) lb.disabled = running;
+}
+
+function scrStop() {
+  if (scrAbortCtrl) scrAbortCtrl.abort();
+}
+
+// ── Append result rows ────────────────────────────────────────────────────────
+function scrAppendEma(row) {
+  scrResults.ema.push(row);
+  const tbody = document.getElementById('scr-ema-tbody');
+  if (!tbody) return;
+  const tf = document.getElementById('scr-ema-timeframe')?.value;
+  const interval = tf==='Weekly'?'W':tf==='Daily'?'D':'60';
+  const tr = document.createElement('tr');
+  const d1=Number(row.ema1_diff_pct), d2=Number(row.ema2_diff_pct), d3=Number(row.ema3_diff_pct);
+  if (d1>3&&d2>3&&d3>3) tr.style.background='rgba(0,230,118,.06)';
+  tr.innerHTML = `<td class="td-symbol">${row.symbol}</td><td class="td-mono">₹${row.current_price}</td><td class="td-mono">${row.rsi14}</td><td class="td-mono ${d1>=0?'green':'red'}">${row.ema1_diff_pct}%</td><td class="td-mono ${d2>=0?'green':'red'}">${row.ema2_diff_pct}%</td><td class="td-mono ${d3>=0?'green':'red'}">${row.ema3_diff_pct}%</td><td><a href="${scrTvUrl(row.symbol,interval)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:.75rem">Open</a></td>`;
+  tbody.appendChild(tr);
+}
+
+function scrAppendVolume(row) {
+  scrResults.volume.push(row);
+  const tbody = document.getElementById('scr-vol-tbody');
+  if (!tbody) return;
+  const iv = document.getElementById('scr-vol-interval')?.value;
+  const interval = iv==='1d'?'D':'60';
+  const tr = document.createElement('tr');
+  const bb = String(row.bb_position||'');
+  if (['Upper Band','Above Band','At Upper'].includes(bb)) tr.style.background='rgba(0,230,118,.06)';
+  else if (['Lower Band','Below Band','At Lower'].includes(bb)) tr.style.background='rgba(255,82,82,.06)';
+  tr.innerHTML = `<td class="td-symbol">${row.symbol}</td><td class="td-mono">${Number(row.prev_5_vol||0).toLocaleString('en-IN')}</td><td class="td-mono">${Number(row.curr_5_vol||0).toLocaleString('en-IN')}</td><td class="td-mono">₹${row.current_price}</td><td class="td-mono">${row.volume_ratio}x</td><td class="td-mono ${Number(row.price_change_pct)>=0?'green':'red'}">${row.price_change_pct}%</td><td class="td-mono">${row.rsi}</td><td><span class="badge badge-green" style="font-size:.68rem">${row.bb_position}</span></td><td><a href="${scrTvUrl(row.symbol,interval)}" target="_blank" rel="noopener" style="color:var(--accent);font-size:.75rem">Open</a></td>`;
+  tbody.appendChild(tr);
+}
+
+function scrOrbPassesFilter(row) {
+  const sig   = document.getElementById('scr-orb-signal')?.value  || 'All';
+  const ohl   = document.getElementById('scr-orb-openhl')?.value  || 'All';
+  const rsiOp = document.getElementById('scr-orb-rsi-op')?.value  || '>';
+  const rsiV  = document.getElementById('scr-orb-rsi-val')?.value || '';
+  const vxOp  = document.getElementById('scr-orb-volx-op')?.value || '>';
+  const vxV   = document.getElementById('scr-orb-volx-val')?.value|| '';
+  const signal = row.signal || row.action_type || '-';
+  if (sig!=='All' && sig!==signal) return false;
+  if (ohl!=='All' && ohl!==row.open_hl) return false;
+  const orbCmp = (v,op,t) => { if(!t&&t!==0) return true; const vn=Number(v),tn=Number(t); if(!isFinite(vn)||!isFinite(tn)) return true; return op==='>'?vn>tn:op==='<'?vn<tn:op==='>='?vn>=tn:op==='<='?vn<=tn:Math.abs(vn-tn)<.001; };
+  if (!orbCmp(row.rsi14, rsiOp, rsiV)) return false;
+  if (row.result_type==='orb' && !orbCmp(row.vol_x, vxOp, vxV)) return false;
+  return true;
+}
+
+function scrAppendOrbRow(row, push=true) {
+  if (push) scrResults.orb.push(row);
+  if (!scrOrbPassesFilter(row)) return;
+  const tbody = document.getElementById('scr-orb-tbody');
+  if (!tbody) return;
+  const tr = document.createElement('tr');
+  tr.style.background = row.signal==='Bullish'?'rgba(0,230,118,.05)':'rgba(255,82,82,.05)';
+  tr.innerHTML = `<td class="td-symbol">${row.symbol}</td><td><span class="badge ${row.signal==='Bullish'?'badge-green':'badge-red'}">${row.signal}</span></td><td class="td-mono">₹${row.breakout_level}</td><td class="td-mono">₹${row.ltp}</td><td>${row.open_hl}</td><td class="td-mono ${Number(row.change_pct)>=0?'green':'red'}">${row.change_pct}%</td><td class="td-mono">${row.rsi14??'—'}</td><td class="td-mono">${row.vol_x}x</td><td><a href="${scrTvUrl(row.symbol,'15')}" target="_blank" rel="noopener" style="color:var(--accent);font-size:.75rem">Open</a></td>`;
+  tbody.appendChild(tr);
+}
+
+function scrAppendOhlRow(row, push=true) {
+  if (push) scrResults.ohl.push(row);
+  if (!scrOrbPassesFilter(row)) return;
+  const tbody = document.getElementById('scr-ohl-tbody');
+  if (!tbody) return;
+  const tr = document.createElement('tr');
+  tr.style.background = row.action_type==='Bullish'?'rgba(0,230,118,.05)':'rgba(255,82,82,.05)';
+  tr.innerHTML = `<td class="td-symbol">${row.symbol}</td><td class="td-mono">₹${row.ltp}</td><td class="td-mono ${Number(row.change_pct)>=0?'green':'red'}">${row.change_pct}%</td><td class="td-mono">${row.rsi14??'—'}</td><td>${row.open_hl}</td><td><span class="badge ${row.action_type==='Bullish'?'badge-green':'badge-red'}">${row.action_type}</span></td><td><a href="${scrTvUrl(row.symbol,'D')}" target="_blank" rel="noopener" style="color:var(--accent);font-size:.75rem">Open</a></td>`;
+  tbody.appendChild(tr);
+}
+
+function scrRedrawOrb() {
+  scrClearTbody('scr-orb-tbody'); scrClearTbody('scr-ohl-tbody');
+  scrResults.orb.filter(scrOrbPassesFilter).forEach(r=>scrAppendOrbRow(r,false));
+  scrResults.ohl.filter(scrOrbPassesFilter).forEach(r=>scrAppendOhlRow(r,false));
+}
+
+function scrPaPassesFilter(row) {
+  const rsiOp = document.getElementById('scr-pa-rsi-op')?.value || 'Any';
+  const rsiV  = Number(document.getElementById('scr-pa-rsi-val')?.value || 0);
+  const bb    = document.getElementById('scr-pa-bb')?.value || 'Any';
+  const chgOp = document.getElementById('scr-pa-chg-op')?.value || 'Any';
+  const chgV  = Number(document.getElementById('scr-pa-chg-val')?.value || 0);
+  if (rsiOp==='Greater Than' && !(Number(row.rsi_val)>rsiV)) return false;
+  if (rsiOp==='Less Than'    && !(Number(row.rsi_val)<rsiV)) return false;
+  if (bb!=='Any' && row.bb_pos!==bb) return false;
+  if (chgOp!=='Any') { const c=Number(row.change_pct); if(chgOp==='>'&&!(c>chgV))return false; if(chgOp==='<'&&!(c<chgV))return false; if(chgOp==='>='&&!(c>=chgV))return false; if(chgOp==='<='&&!(c<=chgV))return false; }
+  return true;
+}
+
+function scrAppendPaRow(row, push=true) {
+  if (push) scrResults.priceaction.push(row);
+  if (!scrPaPassesFilter(row)) return;
+  const tbody = document.getElementById('scr-pa-tbody');
+  if (!tbody) return;
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td class="td-symbol">${row.symbol}</td><td class="td-mono">₹${row.ltp}</td><td class="td-mono ${Number(row.change_pct)>=0?'green':'red'}">${row.change_pct}%</td><td class="td-mono">${row.rsi_val??'—'}</td><td><span class="badge badge-green" style="font-size:.68rem">${row.bb_pos}</span></td><td class="td-mono">${row.d_close_pct}%</td><td class="td-mono">${row.w_close_pct}%</td><td class="td-mono">${row.m_close_pct}%</td><td class="td-mono">${Number(row.volume||0).toLocaleString('en-IN')}</td><td class="td-mono">${row.vol10day_high?'✓':'-'}</td><td><a href="${scrTvUrl(row.symbol,'60')}" target="_blank" rel="noopener" style="color:var(--accent);font-size:.75rem">Open</a></td>`;
+  tbody.appendChild(tr);
+}
+
+function scrRedrawPa() {
+  scrClearTbody('scr-pa-tbody');
+  scrResults.priceaction.forEach(r=>scrAppendPaRow(r,false));
+}
+
+function scrAppendResult(scanner, row) {
+  if (scanner==='ema')         scrAppendEma(row);
+  else if (scanner==='volume') scrAppendVolume(row);
+  else if (scanner==='orb')    { if(row.result_type==='ohl') scrAppendOhlRow(row,true); else scrAppendOrbRow(row,true); }
+  else if (scanner==='priceaction') scrAppendPaRow(row,true);
+}
+
+// ── Main scan runner ──────────────────────────────────────────────────────────
+async function scrRunScan(scanner) {
+  if (scrRunning) return;
+  const sheet = document.getElementById('scr-sheet')?.value;
+  if (!sheet) { scrSetStatus('Select a sheet first.'); return; }
+  if (scanner==='orb') {
+    const ro=document.getElementById('scr-run-orb')?.checked, rl=document.getElementById('scr-run-ohl')?.checked;
+    if (!ro && !rl) { scrSetStatus('Enable at least one ORB scan type.'); return; }
+  }
+  scrClear(scanner);
+  scrSetProgress();
+  scrSetStatus('Starting ' + scanner.toUpperCase() + ' scan on ' + sheet + '…');
+  scrAbortCtrl = new AbortController();
+  scrSetControls(true);
+  try {
+    const res = await fetch('/api/scr/scan_stream/' + scanner, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ sheet, config: scrGetConfig(scanner) }),
+      signal: scrAbortCtrl.signal,
+    });
+    if (!res.ok) { let d={}; try{d=await res.json();}catch(_){} throw new Error(d.error||'Scan failed'); }
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const ev = JSON.parse(line);
+        if (ev.type==='start')    { scrSetProgress(ev); scrSetStatus('Scanning ' + ev.total + ' symbols…'); }
+        if (ev.type==='progress') { scrSetProgress(ev); scrSetStatus(ev.message||'Scanning '+ev.symbol+'…'); }
+        if (ev.type==='result')   { scrAppendResult(scanner, ev.row); scrSetProgress(ev); }
+        if (ev.type==='done')     { scrSetProgress(ev); scrSetStatus(ev.message + (ev.errors?.length?' ('+ev.errors.length+' errors)':'')); }
+      }
+    }
+  } catch(e) {
+    if (e.name==='AbortError') scrSetStatus('Scan stopped. Results kept.');
+    else scrSetStatus('Error: ' + e.message);
+  } finally {
+    scrAbortCtrl = null;
+    scrSetControls(false);
+  }
+}
+
+// ── CSV Export ────────────────────────────────────────────────────────────────
+function scrExportCsv(scanner) {
+  const rows = scanner==='orb' ? [...scrResults.orb,...scrResults.ohl] : (scrResults[scanner]||[]);
+  if (!rows.length) { scrSetStatus('No results to export.'); return; }
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.join(',')].concat(rows.map(row => headers.map(h => { const v=String(row[h]??'').replace(/"/g,'""'); return /[",\n]/.test(v)?`"${v}"`:v; }).join(','))).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));
+  a.download = scanner + '_scan_results.csv';
+  a.click();
 }
 
 // Close modals on overlay click

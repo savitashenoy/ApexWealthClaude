@@ -927,5 +927,335 @@ def get_chart(symbol):
         return jsonify({'error':str(e)}), 500
 
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# SCREENER — 4-scanner stock screener (EMA, Volume, ORB/OHL, Price Action)
+# Routes namespaced under /api/scr/* to avoid collision with main app routes.
+# ════════════════════════════════════════════════════════════════════════════
+import pandas as _pd
+import numpy as _np
+import operator as _operator
+from flask import Response as _Response
+
+_SCR_DATA_FILE = os.path.join(BASE_DIR, 'screener', 'data', 'ScannerData.xlsx')
+
+# ── shared helpers ────────────────────────────────────────────────────────────
+def _scr_normalize(symbol: str) -> str:
+    s = str(symbol).strip().upper()
+    if not s or s in {'NAN', 'NONE'}: return ''
+    if s.startswith('NSE:'): s = s.replace('NSE:', '', 1)
+    if '.' not in s: s = f'{s}.NS'
+    return s
+
+def _scr_clean(symbol: str) -> str:
+    return _scr_normalize(symbol).replace('.NS','').replace('.BO','')
+
+def _scr_sheets():
+    if not os.path.exists(_SCR_DATA_FILE): return []
+    return _pd.ExcelFile(_SCR_DATA_FILE).sheet_names
+
+def _scr_load_symbols(sheet: str):
+    if sheet not in _scr_sheets(): raise ValueError(f"Sheet '{sheet}' not found")
+    df = _pd.read_excel(_SCR_DATA_FILE, sheet_name=sheet, header=None, dtype=str)
+    symbols, seen = [], set()
+    for v in df.values.ravel():
+        s = _scr_normalize(v)
+        if not s or s in seen or len(s) > 25 or ' ' in s: continue
+        symbols.append(s); seen.add(s)
+    return symbols
+
+def _scr_ema(prices, period):
+    return _pd.Series(prices).ewm(span=period, adjust=False).mean()
+
+def _scr_rsi(prices, period=14):
+    c = _pd.Series(prices).astype(float)
+    d = c.diff()
+    g = d.clip(lower=0); l = -d.clip(upper=0)
+    ag = g.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    al = l.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    rs = ag / al.replace(0, _np.nan)
+    return 100 - (100 / (1 + rs))
+
+def _scr_bb_pos(close, length=20, std=2.0, mode='volume'):
+    s = _pd.Series(close)
+    if len(s.dropna()) < length: return 'N/A'
+    ma = s.rolling(length).mean(); sd = s.rolling(length).std()
+    lo, up, mi = float((ma-std*sd).iloc[-1]), float((ma+std*sd).iloc[-1]), float(ma.iloc[-1])
+    if any(_pd.isna(x) for x in [lo,up,mi]): return 'N/A'
+    p = float(s.iloc[-1]); tol = 0.01
+    if p > up+tol: return 'Above Band'
+    if p < lo-tol: return 'Below Band'
+    if abs(p-up)<=tol: return 'At Upper'
+    if abs(p-lo)<=tol: return 'At Lower'
+    if abs(p-mi)<=tol: return 'At Middle'
+    if mode == 'priceaction':
+        hu = mi + 0.5*(up-mi); hl = lo + 0.5*(mi-lo)
+        if p > hu: return 'Upper Zone'
+        if p > mi: return 'Above Mid'
+        if p > hl: return 'Below Mid'
+        return 'Lower Zone'
+    bw = up - lo
+    if bw <= 0: return 'Mid Band'
+    pct = ((p - lo) / bw) * 100
+    if pct > 75: return 'Upper Band'
+    if pct > 60: return 'Above Mid'
+    if pct >= 40: return 'Mid Band'
+    if pct >= 25: return 'Below Mid'
+    return 'Lower Band'
+
+def _scr_fetch(symbol, interval, period=None, days=None, auto_adjust=False):
+    symbol = _scr_normalize(symbol)
+    if not symbol: return _pd.DataFrame()
+    try:
+        ticker = yf.Ticker(symbol)
+        if period:
+            df = ticker.history(period=period, interval=interval)
+        else:
+            end = datetime.now(); start = end - timedelta(days=days or 365)
+            df = ticker.history(start=start, end=end, interval=interval)
+        if df is None or df.empty: return _pd.DataFrame()
+        # Flatten MultiIndex columns if present
+        if isinstance(df.columns, _pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.rename(columns={c: str(c).lower() for c in df.columns})
+        keep = [c for c in df.columns if c in ('open','high','low','close','volume')]
+        df = df[keep].dropna(subset=['close']) if keep else _pd.DataFrame()
+        if df.empty: return _pd.DataFrame()
+        if getattr(df.index,'tz',None) is not None:
+            df.index = df.index.tz_localize(None)
+        return df
+    except Exception:
+        return _pd.DataFrame()
+
+# ── Scanner 1: EMA + RSI Bullish Reversal ────────────────────────────────────
+def _scr_check_ema(symbol, config):
+    tf  = config.get('timeframe','Weekly')
+    lb  = int(config.get('lookback_days', 20))
+    e1,e2,e3 = int(config.get('ema1',9)), int(config.get('ema2',18)), int(config.get('ema3',27))
+    if tf == '60min':   interval, days = '1h',  max(1095, lb*7*3)
+    elif tf == 'Daily': interval, days = '1d',  max(730,  lb*4)
+    else:               interval, days = '1wk', max(1095, lb*7*3)
+    min_needed = max(e1,e2,e3)*2 + 10
+    df = _scr_fetch(symbol, interval=interval, days=days)
+    if df.empty or len(df) < min_needed: return False, 'Insufficient data'
+    df = df.copy(); c = df['close']
+    df[f'e{e1}'] = _scr_ema(c,e1); df[f'e{e2}'] = _scr_ema(c,e2); df[f'e{e3}'] = _scr_ema(c,e3)
+    df['rsi'] = _scr_rsi(c, 14); df = df.dropna()
+    if len(df) < min_needed: return False, 'Insufficient indicator data'
+    # Condition A: price was ever below ALL 3 EMAs in full history
+    below = (df['close']<df[f'e{e1}']) & (df['close']<df[f'e{e2}']) & (df['close']<df[f'e{e3}'])
+    # Condition B: currently above all 3 EMAs
+    lat = df.iloc[-1]; cur = float(lat['close'])
+    v1,v2,v3 = float(lat[f'e{e1}']), float(lat[f'e{e2}']), float(lat[f'e{e3}'])
+    if v1<=0 or v2<=0 or v3<=0: return False, 'Invalid EMA values'
+    if not below.any(): return False, 'Never below all EMAs'
+    if not (cur>v1 and cur>v2 and cur>v3): return False, 'Not above all EMAs now'
+    return True, {'symbol':_scr_normalize(symbol),'current_price':round(cur,2),'rsi14':round(float(lat['rsi']),2),
+                  'ema1_diff_pct':round((cur-v1)/v1*100,2),'ema2_diff_pct':round((cur-v2)/v2*100,2),'ema3_diff_pct':round((cur-v3)/v3*100,2)}
+
+# ── Scanner 2: Volume & Price Breakout ────────────────────────────────────────
+def _scr_check_volume(symbol, config):
+    iv  = config.get('interval','15m')
+    vth = float(config.get('volume_threshold',2.0))
+    pth = float(config.get('price_threshold',3.0))
+    mp  = float(config.get('min_price',100.0))
+    rth = float(config.get('rsi_threshold',55.0))
+    rl  = int(config.get('rsi_length',14))
+    period = '3mo' if iv=='1d' else '30d'
+    df = _scr_fetch(symbol, interval=iv, period=period)
+    if df.empty: return False, 'No data'
+    # Resample sub-hourly to 1h for consistency
+    if iv not in ('1h','1d'):
+        try:
+            df = df.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last','volume':'sum'}).dropna(subset=['close'])
+        except Exception:
+            pass
+    if len(df) < max(21, rl+5): return False, 'Insufficient data'
+    pv = float(df.iloc[-10:-5]['volume'].mean()); cv = float(df.iloc[-5:]['volume'].mean())
+    pp = float(df.iloc[-10:-5]['close'].mean());  cp = float(df.iloc[-5:]['close'].mean())
+    ltp = float(df.iloc[-1]['close'])
+    if pv<=0 or pp<=0: return False, 'Zero denominator'
+    rsi_s = _scr_rsi(df['close'], rl); rsi_v = float(rsi_s.iloc[-1])
+    if _pd.isna(rsi_v): return False, 'RSI unavailable'
+    vr = cv/pv; pc = (cp-pp)/pp*100; bb = _scr_bb_pos(df['close'], mode='volume')
+    if vr>=vth and pc>=pth and ltp>mp and rsi_v>rth and cv>pv:
+        return True, {'symbol':_scr_normalize(symbol),'prev_5_vol':round(pv),'curr_5_vol':round(cv),
+                      'current_price':round(ltp,2),'volume_ratio':round(vr,2),'price_change_pct':round(pc,2),
+                      'rsi':round(rsi_v,1),'bb_position':bb}
+    return False, 'No volume breakout'
+
+# ── Scanner 3: ORB + Open High/Low ───────────────────────────────────────────
+def _scr_check_ohl(symbol):
+    df = _scr_fetch(symbol, interval='1d', period='1mo')
+    if df.empty or len(df)<2: return False, 'Insufficient daily data'
+    df = df.sort_index(); lat = df.iloc[-1]
+    op,hi,lo,cl = float(lat['open']),float(lat['high']),float(lat['low']),float(lat['close'])
+    if abs(op-hi)<0.05:   ohl,action = 'OpenHigh','Bearish'
+    elif abs(op-lo)<0.05: ohl,action = 'OpenLow', 'Bullish'
+    else: return False,'Neither OpenHigh nor OpenLow'
+    rsi = _scr_rsi(df['close'],14).iloc[-1]
+    pc = float(df['close'].iloc[-2]); chg = (cl-pc)/pc*100 if pc else 0
+    return True, {'result_type':'ohl','symbol':_scr_clean(symbol),'ltp':round(cl,2),
+                  'change_pct':round(chg,2),'rsi14':round(float(rsi),2) if not _pd.isna(rsi) else None,
+                  'open_hl':ohl,'action_type':action}
+
+def _scr_check_orb(symbol, config):
+    st = config.get('start_time','09:15'); et = config.get('end_time','10:00')
+    vm = float(config.get('vol_multiplier',1.5)); iv = config.get('interval','15m')
+    df = _scr_fetch(symbol, interval=iv, period='2d')
+    if df.empty or len(df)<5: return False,'Insufficient intraday data'
+    # Restore timezone for between_time
+    try:
+        df.index = _pd.to_datetime(df.index).tz_localize('UTC').tz_convert('Asia/Kolkata')
+    except Exception:
+        try: df.index = df.index.tz_localize('Asia/Kolkata')
+        except Exception: return False,'Timezone error'
+    df = df.sort_index()
+    last_date = df.index[-1].date()
+    today = df[df.index.date == last_date].copy()
+    if today.empty: return False,'No today data'
+    try: rng = today.between_time(st, et)
+    except Exception: return False,'Invalid time range'
+    if rng.empty: return False,'Opening range empty'
+    oh = float(rng['high'].max()); ol = float(rng['low'].min())
+    arv = float(rng['volume'].mean()) or 1.0
+    lat = today.iloc[-1]; cl = float(lat['close']); cvol = float(lat['volume'])
+    if cvol <= arv*vm: return False,'Volume not met'
+    if cl > oh:   sig, bl = 'Bullish', oh
+    elif cl < ol: sig, bl = 'Bearish', ol
+    else: return False,'No ORB breakout'
+    dop = float(today.iloc[0]['open']); dhi = float(today['high'].max()); dlo = float(today['low'].min())
+    ost = 'OpenHigh' if abs(dop-dhi)<0.05 else ('OpenLow' if abs(dop-dlo)<0.05 else '-')
+    rsi = _scr_rsi(df['close'],14).iloc[-1]
+    pc2 = float(df['close'].iloc[-2]) if len(df)>1 else cl
+    chg = (cl-pc2)/pc2*100 if pc2 else 0
+    volx = cvol/arv if arv else 0
+    return True,{'result_type':'orb','symbol':_scr_clean(symbol),'signal':sig,'breakout_level':round(bl,2),
+                 'ltp':round(cl,2),'open_hl':ost,'change_pct':round(chg,2),
+                 'rsi14':round(float(rsi),2) if not _pd.isna(rsi) else None,'vol_x':round(volx,1)}
+
+def _scr_check_orb_combined(symbol, config):
+    rows = []
+    if bool(config.get('run_ohl', True)):
+        ok,d = _scr_check_ohl(symbol)
+        if ok and isinstance(d, dict): rows.append(d)
+    if bool(config.get('run_orb', True)):
+        ok,d = _scr_check_orb(symbol, config)
+        if ok and isinstance(d, dict): rows.append(d)
+    return rows
+
+# ── Scanner 4: Price Action condition builder ─────────────────────────────────
+_SCR_INTRADAY = {'5 minute':'5m','15 minute':'15m','60 minute':'60m'}
+_SCR_OPS = {'<':_operator.lt,'<=':_operator.le,'=':lambda a,b:abs(a-b)<1e-9,'>=':_operator.ge,'>':_operator.gt}
+
+def _scr_candle_val(offset_str, period, vtype, dd, dw, dm, intra):
+    try:
+        offset = int(str(offset_str).split(' ')[0])
+        if period in _SCR_INTRADAY: df = intra.get(_SCR_INTRADAY[period])
+        elif period == 'Day':  df = dd
+        elif period == 'Week': df = dw
+        else:                  df = dm
+        if df is None or df.empty: return None
+        idx = offset - 1
+        if abs(idx) > len(df): return None
+        col = str(vtype).lower()
+        if col not in df.columns: return None
+        return float(df[col].iloc[idx])
+    except Exception: return None
+
+def _scr_check_pa(symbol, config):
+    conds = [c for c in config.get('conditions',[]) if c.get('active')]
+    if not conds: return False,'No active conditions'
+    req_intra = {_SCR_INTRADAY[p] for c in conds for p in [c.get('period1'),c.get('period2')] if p in _SCR_INTRADAY}
+    dd = _scr_fetch(symbol, interval='1d',  period='1y',  auto_adjust=True)
+    if dd.empty or len(dd)<21: return False,'Insufficient daily data'
+    dw = _scr_fetch(symbol, interval='1wk', period='5y',  auto_adjust=True)
+    dm = _scr_fetch(symbol, interval='1mo', period='5y',  auto_adjust=True)
+    if dw.empty or dm.empty: return False,'Insufficient weekly/monthly data'
+    intra = {}
+    for iv in req_intra:
+        intra[iv] = _scr_fetch(symbol, interval=iv, period='60d', auto_adjust=True)
+    for cond in conds:
+        v1 = _scr_candle_val(cond.get('offset1','0 (current)'), cond.get('period1','Day'),  cond.get('value1','CLOSE'), dd,dw,dm,intra)
+        v2 = _scr_candle_val(cond.get('offset2','-1 (ago)'),    cond.get('period2','Month'), cond.get('value2','HIGH'),  dd,dw,dm,intra)
+        op = _SCR_OPS.get(cond.get('operator','<'))
+        if v1 is None or v2 is None or op is None or not op(v1,v2): return False,'Condition not met'
+    c = dd['close']; lat = dd.iloc[-1]; latw = dw.iloc[-1]; latm = dm.iloc[-1]
+    rsi = _scr_rsi(c,14).iloc[-1]; bb = _scr_bb_pos(c, mode='priceaction')
+    ltp = float(lat['close'])
+    pd = float(dd['close'].iloc[-2]) if len(dd)>1 else ltp
+    pw = float(dw['close'].iloc[-2]) if len(dw)>1 else ltp
+    pm = float(dm['close'].iloc[-2]) if len(dm)>1 else ltp
+    vol = int(lat.get('volume',0))
+    v10 = float(dd['volume'].iloc[-11:-1].max()) if 'volume' in dd.columns and len(dd)>=11 else 0
+    return True,{'symbol':_scr_normalize(symbol),'ltp':round(ltp,2),
+                 'change_pct':round((ltp-pd)/pd*100,2) if pd else 0,
+                 'rsi_val':round(float(rsi),2) if not _pd.isna(rsi) else None,'bb_pos':bb,
+                 'd_close_pct':round((ltp-pd)/pd*100,2) if pd else 0,
+                 'w_close_pct':round((ltp-pw)/pw*100,2) if pw else 0,
+                 'm_close_pct':round((ltp-pm)/pm*100,2) if pm else 0,
+                 'volume':vol,'vol10day_high':bool(vol>v10) if v10 else False}
+
+# ── Scan dispatcher & streaming ───────────────────────────────────────────────
+def _scr_scan_symbol(scanner, symbol, config):
+    if scanner == 'ema':
+        ok,d = _scr_check_ema(symbol, config); return [d] if ok and isinstance(d,dict) else []
+    if scanner == 'volume':
+        ok,d = _scr_check_volume(symbol, config); return [d] if ok and isinstance(d,dict) else []
+    if scanner == 'orb':
+        return _scr_check_orb_combined(symbol, config)
+    if scanner == 'priceaction':
+        ok,d = _scr_check_pa(symbol, config); return [d] if ok and isinstance(d,dict) else []
+    raise ValueError('Unknown scanner')
+
+def _scr_iter_events(sheet, scanner, config, max_symbols=None):
+    symbols = _scr_load_symbols(sheet)
+    if max_symbols: symbols = symbols[:int(max_symbols)]
+    total = len(symbols); matches = 0; errors = []
+    ev = lambda p: json.dumps(p, default=str) + '\n'
+    yield ev({'type':'start','sheet':sheet,'scanner':scanner,'total':total,'scanned':0,'matches':0,'percent':0,'symbol':''})
+    for i, sym in enumerate(symbols, 1):
+        pct = round((i-1)/total*100, 2) if total else 100
+        yield ev({'type':'progress','symbol':sym,'scanned':i-1,'total':total,'matches':matches,'percent':pct,'message':f'Scanning {sym} ({i}/{total})'})
+        try:
+            for row in _scr_scan_symbol(scanner, sym, config):
+                matches += 1
+                yield ev({'type':'result','symbol':sym,'row':row,'scanned':i,'total':total,'matches':matches,'percent':round(i/total*100,2) if total else 100})
+        except Exception as exc:
+            errors.append({'symbol':sym,'error':str(exc)[:160]})
+        yield ev({'type':'progress','symbol':sym,'scanned':i,'total':total,'matches':matches,'percent':round(i/total*100,2) if total else 100,'message':f'Completed {sym} ({i}/{total})'})
+    yield ev({'type':'done','sheet':sheet,'scanner':scanner,'scanned':total,'total':total,'matches':matches,'percent':100,'errors':errors[:25],'message':f'Scan completed: {matches} matches from {total} symbols.'})
+
+# ── Screener API routes ───────────────────────────────────────────────────────
+@app.route('/api/scr/sheets')
+def scr_api_sheets():
+    return jsonify({'sheets': _scr_sheets(), 'data_file': os.path.basename(_SCR_DATA_FILE)})
+
+@app.route('/api/scr/symbols')
+def scr_api_symbols():
+    sheet = request.args.get('sheet','')
+    try:
+        syms = _scr_load_symbols(sheet)
+        return jsonify({'sheet':sheet,'count':len(syms),'symbols':syms[:1000]})
+    except Exception as e:
+        return jsonify({'error':str(e)}), 400
+
+@app.route('/api/scr/scan_stream/<scanner>', methods=['POST'])
+def scr_api_scan_stream(scanner):
+    if scanner not in {'ema','volume','orb','priceaction'}:
+        return jsonify({'error':'Unknown scanner'}), 400
+    payload = request.get_json(force=True) or {}
+    sheet   = payload.get('sheet')
+    config  = payload.get('config', {})
+    max_sym = payload.get('max_symbols')
+    try:
+        return _Response(
+            _scr_iter_events(sheet, scanner, config, max_sym),
+            mimetype='application/x-ndjson',
+            headers={'Cache-Control':'no-cache','X-Accel-Buffering':'no'}
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
