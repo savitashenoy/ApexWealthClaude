@@ -592,8 +592,34 @@ def admin_stats():
     emails = kv_get(users_index_key(), [])
     return jsonify({'total_users': len(emails)})
 
-@app.route('/api/admin/me', methods=['GET'])
-def admin_me():
+@app.route('/api/admin/migrate-users', methods=['POST'])
+def admin_migrate_users():
+    """
+    One-time migration: set status='approved' and disabled=False on every existing user
+    that was created before the status field was introduced. Safe to run multiple times.
+    """
+    if not require_admin(request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    emails  = kv_get(users_index_key(), [])
+    updated = 0
+    for email in emails:
+        u = kv_get(user_key(email))
+        if not u:
+            continue
+        changed = False
+        if 'status' not in u:
+            u['status'] = 'approved'
+            changed = True
+        if 'disabled' not in u:
+            u['disabled'] = False
+            changed = True
+        if changed:
+            kv_set(user_key(email), u)
+            updated += 1
+    return jsonify({'message': f'Migration complete. {updated} user(s) updated, {len(emails)-updated} already had status field.',
+                    'total': len(emails), 'updated': updated})
+
+
     """Token verification endpoint — frontend calls this to confirm session is valid."""
     if not require_admin(request):
         return jsonify({'error': 'Unauthorized'}), 401

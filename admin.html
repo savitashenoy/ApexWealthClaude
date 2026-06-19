@@ -284,6 +284,7 @@
     </div>
     <div class="topbar-right">
       <div class="topbar-stat">Total Users: <span id="stat-total">—</span></div>
+      <button id="migrate-btn" class="btn-logout" onclick="migrateUsers()" title="Approve all legacy users who have no status field" style="font-size:11px;border-color:rgba(243,156,18,.5);color:#f39c12">Migrate Legacy Users</button>
       <button class="btn-logout" onclick="doAdminLogout()">Sign Out</button>
     </div>
   </div>
@@ -492,6 +493,8 @@ function showShell() {
   ls.style.display = 'none';
   sh.style.display = 'flex';
   sh.style.flexDirection = 'column';
+  // Silently migrate legacy users (sets status=approved on accounts lacking the field)
+  adminFetch('/admin/migrate-users', 'POST', {}).catch(function(){});
   loadStats();
   loadUsers();
 }
@@ -659,6 +662,21 @@ function renderUsers(users) {
   rows.forEach(function(tr){ tbody.appendChild(tr); });
 }
 
+
+// ── Migration: approve all legacy accounts that lack a status field ─────────────
+async function migrateUsers() {
+  var btn = document.getElementById('migrate-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Migrating…'; }
+  try {
+    var d = await adminFetch('/admin/migrate-users', 'POST', {});
+    showToast(d.message || 'Migration complete', 'ok');
+    await loadUsers();
+  } catch(err) {
+    showToast('Migration failed: ' + err.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Migrate Legacy Users'; }
+  }
+}
 
 // ── Quick approve & enable/disable helpers ────────────────────────────────────
 async function approveUser(userId) {
