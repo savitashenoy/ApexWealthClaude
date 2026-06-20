@@ -1385,7 +1385,7 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
         </div>
 
         <!-- EMA TAB -->
-        <div class="tab-content active" id="scr-pane-ema" style="padding:18px 20px">
+        <div class="scr-pane" id="scr-pane-ema" style="display:block;padding:18px 20px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
             <div>
               <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">EMA + RSI Bullish Reversal Scanner</div>
@@ -1416,7 +1416,7 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
         </div>
 
         <!-- VOLUME TAB -->
-        <div class="tab-content" id="scr-pane-volume" style="padding:18px 20px">
+        <div class="scr-pane" id="scr-pane-volume" style="display:none;padding:18px 20px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
             <div>
               <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">Volume &amp; Price Breakout Scanner</div>
@@ -1444,7 +1444,7 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
         </div>
 
         <!-- ORB TAB -->
-        <div class="tab-content" id="scr-pane-orb" style="padding:18px 20px">
+        <div class="scr-pane" id="scr-pane-orb" style="display:none;padding:18px 20px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
             <div>
               <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">Opening Range Breakout + Open High/Low Scanner</div>
@@ -1478,16 +1478,16 @@ body.light .allocation-title-chip { background: #2a6496; color: #fff !important;
             <button class="tab-btn active" id="scr-orb-sub-orb" onclick="scrSetOrbSubTab('orb')">15 Min ORB Results</button>
             <button class="tab-btn"        id="scr-orb-sub-ohl" onclick="scrSetOrbSubTab('ohl')">Open High/Low Results</button>
           </div>
-          <div id="scr-orb-pane" class="tab-content active" style="padding:0">
+          <div id="scr-orb-pane" class="scr-pane" style="display:block;padding:0">
             <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Signal</th><th>Breakout Lvl</th><th>LTP</th><th>Open H/L</th><th>Change %</th><th>RSI(14)</th><th>VolX</th><th>Chart</th></tr></thead><tbody id="scr-orb-tbody"></tbody></table></div>
           </div>
-          <div id="scr-ohl-pane" class="tab-content" style="padding:0">
+          <div id="scr-ohl-pane" class="scr-pane" style="display:none;padding:0">
             <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>LTP</th><th>Change %</th><th>RSI(14)</th><th>Open H/L</th><th>Action</th><th>Chart</th></tr></thead><tbody id="scr-ohl-tbody"></tbody></table></div>
           </div>
         </div>
 
         <!-- PRICE ACTION TAB -->
-        <div class="tab-content" id="scr-pane-priceaction" style="padding:18px 20px">
+        <div class="scr-pane" id="scr-pane-priceaction" style="display:none;padding:18px 20px">
           <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
             <div>
               <div style="font-size:.95rem;font-weight:600;margin-bottom:2px">Price Action Condition Scanner</div>
@@ -3530,15 +3530,19 @@ async function scrLoadSymbols() {
 function scrSetTab(name) {
   scrActiveScanner = name;
   ['ema','volume','orb','priceaction'].forEach(t => {
-    document.getElementById('scr-tab-' + t)?.classList.toggle('active', t === name);
-    document.getElementById('scr-pane-' + t)?.classList.toggle('active', t === name);
+    const btn  = document.getElementById('scr-tab-' + t);
+    const pane = document.getElementById('scr-pane-' + t);
+    if (btn)  btn.classList.toggle('active', t === name);
+    if (pane) pane.style.display = (t === name) ? 'block' : 'none';
   });
 }
 
 function scrSetOrbSubTab(which) {
   ['orb','ohl'].forEach(t => {
-    document.getElementById('scr-orb-sub-' + t)?.classList.toggle('active', t === which);
-    document.getElementById('scr-' + t + '-pane')?.classList.toggle('active', t === which);
+    const btn  = document.getElementById('scr-orb-sub-' + t);
+    const pane = document.getElementById('scr-' + t + '-pane');
+    if (btn)  btn.classList.toggle('active', t === which);
+    if (pane) pane.style.display = (t === which) ? 'block' : 'none';
   });
 }
 
